@@ -1,0 +1,106 @@
+---
+title: Entities
+description: Core data types used across Keysmith.
+---
+
+Keysmith defines five core entity types, each backed by a dedicated store interface.
+
+## Key
+
+The `key.Key` struct represents an API key. Raw keys are never stored -- only their SHA-256 hash.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID` | `id.KeyID` | Unique TypeID identifier |
+| `Name` | `string` | Human-readable key name |
+| `Hash` | `string` | SHA-256 hash of the raw key |
+| `Prefix` | `string` | Key prefix (e.g., "sk") |
+| `Environment` | `Environment` | live, test, or dev |
+| `State` | `State` | active, rotated, expired, revoked, or suspended |
+| `Scopes` | `[]string` | Permission scopes assigned to the key |
+| `AppID` | `string` | Application identifier |
+| `TenantID` | `string` | Tenant identifier |
+| `PolicyID` | `*id.PolicyID` | Optional attached policy |
+| `ExpiresAt` | `*time.Time` | Optional expiration time |
+| `LastUsedAt` | `*time.Time` | Last time the key was used |
+
+### Key states
+
+| State | Description | Transitions to |
+| ----- | ----------- | -------------- |
+| `active` | Valid and usable | rotated, expired, revoked, suspended |
+| `rotated` | Replaced, may be in grace period | revoked |
+| `expired` | Past expiration time | (terminal) |
+| `revoked` | Permanently disabled | (terminal) |
+| `suspended` | Temporarily disabled | active (reactivate) |
+
+### Environments
+
+| Value | Constant | Description |
+| ----- | -------- | ----------- |
+| `live` | `key.EnvLive` | Production environment |
+| `test` | `key.EnvTest` | Testing environment |
+| `dev` | `key.EnvDev` | Development environment |
+
+## Policy
+
+The `policy.Policy` struct defines constraints for API keys.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID` | `id.PolicyID` | Unique identifier |
+| `Name` | `string` | Policy name |
+| `RateLimit` | `int` | Max requests per window |
+| `RateWindow` | `time.Duration` | Rate limit window |
+| `AllowedIPs` | `[]string` | CIDR-notation IP allowlist |
+| `AllowedOrigins` | `[]string` | HTTP origin allowlist |
+| `AllowedScopes` | `[]string` | Permitted scopes |
+| `MaxKeyAge` | `time.Duration` | Maximum key lifetime |
+
+## Scope
+
+The `scope.Scope` struct represents a permission scope that can be assigned to keys.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID` | `id.ScopeID` | Unique identifier |
+| `Name` | `string` | Scope name (e.g., "read:users") |
+| `Description` | `string` | Human-readable description |
+
+## Usage Record
+
+The `usage.Record` struct tracks per-request API key usage.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID` | `id.UsageID` | Unique identifier |
+| `KeyID` | `id.KeyID` | Associated key |
+| `Endpoint` | `string` | Request endpoint |
+| `Method` | `string` | HTTP method |
+| `StatusCode` | `int` | Response status code |
+| `IP` | `string` | Client IP address |
+| `UserAgent` | `string` | Client user agent |
+| `Timestamp` | `time.Time` | Request timestamp |
+
+## Rotation Record
+
+The `rotation.Record` struct tracks key rotation history.
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID` | `id.RotationID` | Unique identifier |
+| `KeyID` | `id.KeyID` | Rotated key |
+| `OldHash` | `string` | Previous key hash |
+| `NewHash` | `string` | New key hash |
+| `Reason` | `Reason` | Rotation reason |
+| `GraceTTL` | `time.Duration` | Grace period duration |
+| `GraceExpiry` | `time.Time` | When grace period ends |
+
+### Rotation reasons
+
+| Reason | Constant | Description |
+| ------ | -------- | ----------- |
+| `scheduled` | `rotation.ReasonScheduled` | Regular scheduled rotation |
+| `compromised` | `rotation.ReasonCompromised` | Key may have been compromised |
+| `expiring` | `rotation.ReasonExpiring` | Key approaching expiration |
+| `manual` | `rotation.ReasonManual` | Manual rotation |

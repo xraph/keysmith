@@ -1,0 +1,63 @@
+---
+title: Identity (TypeID)
+description: Type-safe, K-sortable entity identifiers.
+---
+
+Every entity in Keysmith gets a type-prefixed, K-sortable, UUIDv7-based identifier using the [TypeID](https://github.com/jetify-com/typeid) specification. IDs are validated at parse time to ensure the prefix matches the expected type.
+
+## Prefixes
+
+| Prefix | Entity | Example |
+| ------ | ------ | ------- |
+| `akey` | API Key | `akey_01h2xcejqtf2nbrexx3vqjhp41` |
+| `kpol` | Policy | `kpol_01h2xcejqtf2nbrexx3vqjhp41` |
+| `kusg` | Usage Record | `kusg_01h2xcejqtf2nbrexx3vqjhp41` |
+| `krot` | Rotation Record | `krot_01h455vb4pex5vsknk084sn02q` |
+| `kscp` | Scope | `kscp_01h455vb4pex5vsknk084sn02q` |
+
+## Type aliases
+
+Each entity has a dedicated type alias for readability. All aliases resolve to `typeid.TypeID`.
+
+```go
+import "github.com/xraph/keysmith/id"
+
+type KeyID      = typeid.TypeID
+type PolicyID   = typeid.TypeID
+type UsageID    = typeid.TypeID
+type RotationID = typeid.TypeID
+type ScopeID    = typeid.TypeID
+type AnyID      = typeid.TypeID
+```
+
+## Creating IDs
+
+```go
+kid := id.NewKeyID()      // akey_01h2xce...
+pid := id.NewPolicyID()   // kpol_01h2xce...
+uid := id.NewUsageID()    // kusg_01h2xce...
+rid := id.NewRotationID() // krot_01h2xce...
+sid := id.NewScopeID()    // kscp_01h2xce...
+```
+
+## Parsing IDs
+
+Parse functions validate that the prefix matches the expected type.
+
+```go
+kid, err := id.ParseKeyID("akey_01h2xcejqtf2nbrexx3vqjhp41")
+// err == nil
+
+_, err = id.ParseKeyID("kpol_01h2xcejqtf2nbrexx3vqjhp41")
+// err: id: expected prefix "akey", got "kpol"
+```
+
+Use `ParseAny` to accept any valid prefix:
+
+```go
+anyID, err := id.ParseAny("akey_01h2xcejqtf2nbrexx3vqjhp41")
+```
+
+## Serialization
+
+TypeIDs implement `MarshalText`, `UnmarshalText`, `MarshalJSON`, `UnmarshalJSON`, and the database `Value`/`Scan` interfaces. They serialize as their string representation in all formats.

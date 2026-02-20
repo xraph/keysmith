@@ -1,0 +1,159 @@
+---
+title: Architecture
+description: How Keysmith's packages fit together.
+---
+
+Keysmith is organized as a set of focused Go packages. The root `keysmith` package provides the engine, types, hasher, and key generator. Five subsystem packages define domain entities and store interfaces. Supporting packages provide plugins, middleware, API handlers, and the Forge extension adapter. Two store backends implement the same composite interface.
+
+## Package diagram
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          keysmith.Engine                                │
+│                                                                         │
+│  CreateKey   ValidateKey   RotateKey   RevokeKey   SuspendKey          │
+│  ReactivateKey   GetKey   ListKeys                                     │
+│  CreatePolicy  UpdatePolicy  DeletePolicy  ListPolicies                │
+│  AssignScopes  RemoveScopes  RecordUsage  GetUsageAggregation         │
+├──────────────────────────┬──────────────────────────────────────────────┤
+│   Supporting packages    │   Plugin system                              │
+│                          │                                              │
+│  Hasher (SHA-256)       │  plugin.Plugin (base)                       │
+│  KeyGenerator           │  plugin.Manager                              │
+│  id     (TypeID)         │    KeyCreated / KeyRevoked                   │
+│  scope  (context keys)   │    KeyRotated / KeySuspended                 │
+│  api    (REST handlers)  │    KeyValidated / KeyExpired                 │
+│  middleware (auth)       │    PolicyCreated / PolicyUpdated             │
+│  extension (Forge)       │    KeyRateLimited / Shutdown                 │
+│                          │                                              │
+│  audit_hook (audit)      │  observability (metrics)                    │
+│  warden_hook (authz)     │                                              │
+├──────────────────────────┴──────────────────────────────────────────────┤
+│                           store.Store                                   │
+│  (composite: key.Store + policy.Store + scope.Store +                  │
+│   usage.Store + rotation.Store + Migrate / Ping / Close)               │
+├───────────────────────────────────────┬─────────────────────────────────┤
+│ store/memory                          │ store/postgres                  │
+│ (in-process maps + sync.RWMutex)     │ (pgx connection pool)          │
+└───────────────────────────────────────┴─────────────────────────────────┘
+```
+
+## Engine construction
+
+The engine is the central coordinator. Configure it with functional options.
+
+```go
+import (
+    "github.com/xraph/keysmith"
+    "github.com/xraph/keysmith/store/memory"
+    audithook "github.com/xraph/keysmith/audit_hook"
+    "github.com/xraph/keysmith/observability"
+)
+
+eng, err := keysmith.NewEngine(
+    keysmith.WithStore(memory.New()),
+    keysmith.WithExtension(audithook.New(myRecorder)),
+    keysmith.WithExtension(observability.NewMetricsExtension()),
+)
+```
+
+## Request flow
+
+Every Keysmith operation follows the same three-phase flow: **scope**, **resolve**, **respond**.
+
+### 1. Scope
+
+The engine extracts app ID and tenant ID from the context. In standalone mode, use `keysmith.WithTenant`. With Forge, scope is extracted automatically from `forge.Scope`.
+
+```go
+ctx := keysmith.WithTenant(ctx, "my-app", "tenant-1")
+```
+
+### 2. Resolve
+
+Each operation resolves the requested resource using scope values from context:
+
+- **CreateKey** -- generates a raw key, hashes it with SHA-256, stores the hash, fires `KeyCreated` hooks
+- **ValidateKey** -- hashes the incoming raw key, looks up the hash in the store, checks state, checks policy, fires `KeyValidated` or `KeyValidationFailed`
+- **RotateKey** -- creates a new key, marks old key as `rotated`, records grace period, fires `KeyRotated`
+- **RevokeKey** -- transitions key to `revoked` state, fires `KeyRevoked`
+
+### 3. Respond
+
+The result is returned to the caller. For validation, this includes the key entity, scopes, and policy information. For creation, it includes the raw key (shown once) and the key metadata.
+
+## Key states
+
+```text
+active → rotated → revoked
+active → suspended → active (reactivate)
+active → expired
+active → revoked
+```
+
+## Tenant isolation
+
+Keysmith enforces tenant isolation at multiple layers:
+
+| Layer | Mechanism |
+| ----- | --------- |
+| **Context** | `keysmith.WithTenant` injects app ID and tenant ID into `context.Context` |
+| **Engine** | Every operation reads scope from context before querying the store |
+| **Store** | All queries include app ID and tenant ID as scoping parameters |
+| **Validation** | Key validation verifies the key belongs to the requesting tenant |
+| **Plugin hooks** | Lifecycle events include tenant context for audit and metrics |
+
+## Plugin system
+
+The `plugin.Manager` uses type assertion to discover which lifecycle hooks each plugin implements.
+
+```go
+import "github.com/xraph/keysmith/plugin"
+
+// A plugin implements plugin.Plugin (Name) and any combination of hooks.
+type myPlugin struct{}
+func (p *myPlugin) Name() string { return "my-plugin" }
+func (p *myPlugin) OnKeyCreated(ctx context.Context, k *key.Key) error { ... }
+func (p *myPlugin) OnKeyRevoked(ctx context.Context, k *key.Key, reason string) error { ... }
+```
+
+### Lifecycle hooks
+
+| Interface | Method | Fired when |
+| --------- | ------ | ---------- |
+| `KeyCreated` | `OnKeyCreated(ctx, key)` | Key successfully created |
+| `KeyCreateFailed` | `OnKeyCreateFailed(ctx, key, err)` | Key creation fails |
+| `KeyValidated` | `OnKeyValidated(ctx, key)` | Key passes validation |
+| `KeyValidationFailed` | `OnKeyValidationFailed(ctx, rawKey, err)` | Key validation fails |
+| `KeyRotated` | `OnKeyRotated(ctx, key, record)` | Key is rotated |
+| `KeyRevoked` | `OnKeyRevoked(ctx, key, reason)` | Key is permanently revoked |
+| `KeySuspended` | `OnKeySuspended(ctx, key)` | Key is temporarily suspended |
+| `KeyReactivated` | `OnKeyReactivated(ctx, key)` | Suspended key is reactivated |
+| `KeyExpired` | `OnKeyExpired(ctx, key)` | Key found expired during validation |
+| `KeyRateLimited` | `OnKeyRateLimited(ctx, key)` | Key exceeds rate limit |
+| `PolicyCreated` | `OnPolicyCreated(ctx, policy)` | Policy created |
+| `PolicyUpdated` | `OnPolicyUpdated(ctx, policy)` | Policy updated |
+| `PolicyDeleted` | `OnPolicyDeleted(ctx, policyID)` | Policy deleted |
+| `Shutdown` | `OnShutdown(ctx)` | Engine shutting down |
+
+## Package index
+
+| Package | Import path | Purpose |
+| ------- | ----------- | ------- |
+| `keysmith` | `github.com/xraph/keysmith` | Core engine, types, hasher, generator |
+| `key` | `github.com/xraph/keysmith/key` | Key entity, lifecycle states, store interface |
+| `policy` | `github.com/xraph/keysmith/policy` | Policy entity, store interface |
+| `scope` | `github.com/xraph/keysmith/scope` | Scope entity, key-scope assignment, store interface |
+| `usage` | `github.com/xraph/keysmith/usage` | Usage records, aggregation, store interface |
+| `rotation` | `github.com/xraph/keysmith/rotation` | Rotation records, reasons, store interface |
+| `id` | `github.com/xraph/keysmith/id` | TypeID-based entity identifiers (akey, kpol, kusg, krot, kscp) |
+| `store` | `github.com/xraph/keysmith/store` | Composite store interface embedding all sub-stores |
+| `store/memory` | `github.com/xraph/keysmith/store/memory` | In-memory store for testing |
+| `store/postgres` | `github.com/xraph/keysmith/store/postgres` | PostgreSQL store with embedded migrations |
+| `plugin` | `github.com/xraph/keysmith/plugin` | Lifecycle hook interfaces and dispatch manager |
+| `audit_hook` | `github.com/xraph/keysmith/audit_hook` | Audit trail plugin |
+| `observability` | `github.com/xraph/keysmith/observability` | Metrics plugin (go-utils counters) |
+| `warden_hook` | `github.com/xraph/keysmith/warden_hook` | Warden authorization bridge plugin |
+| `api` | `github.com/xraph/keysmith/api` | Forge-style REST API handlers |
+| `middleware` | `github.com/xraph/keysmith/middleware` | HTTP middleware for API key validation |
+| `extension` | `github.com/xraph/keysmith/extension` | Forge extension adapter (DI, routes, migration) |

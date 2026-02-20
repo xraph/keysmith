@@ -1,0 +1,63 @@
+---
+title: Error Handling
+description: Sentinel errors for all Keysmith operations.
+---
+
+Keysmith defines sentinel errors in the root `keysmith` package. Use `errors.Is` to match them.
+
+## Sentinel errors
+
+| Error | Description |
+| ----- | ----------- |
+| `ErrInvalidKey` | The raw key is malformed or empty |
+| `ErrKeyNotFound` | No key matches the given hash or ID |
+| `ErrKeyExpired` | The key has passed its expiration time |
+| `ErrKeyRevoked` | The key has been permanently revoked |
+| `ErrKeySuspended` | The key is temporarily suspended |
+| `ErrKeyRotated` | The key has been rotated and is outside the grace period |
+| `ErrKeyRateLimited` | The key has exceeded its rate limit |
+| `ErrPolicyViolation` | The request violates the key's attached policy |
+| `ErrPolicyNotFound` | No policy matches the given ID |
+| `ErrScopeNotFound` | No scope matches the given ID |
+| `ErrInvalidTransition` | The requested state transition is not allowed |
+| `ErrDuplicateKey` | A key with the same hash already exists |
+| `ErrMissingStore` | No store was provided to the engine |
+| `ErrMissingAppID` | The app ID is missing from context |
+| `ErrMissingTenantID` | The tenant ID is missing from context |
+| `ErrInvalidPrefix` | The key prefix is invalid |
+
+## Usage
+
+```go
+import "errors"
+
+vr, err := eng.ValidateKey(ctx, rawKey)
+if err != nil {
+    switch {
+    case errors.Is(err, keysmith.ErrKeyNotFound):
+        // Unknown key — return 401
+    case errors.Is(err, keysmith.ErrKeyExpired):
+        // Key expired — return 401
+    case errors.Is(err, keysmith.ErrKeyRevoked):
+        // Key revoked — return 403
+    case errors.Is(err, keysmith.ErrKeySuspended):
+        // Key suspended — return 403
+    case errors.Is(err, keysmith.ErrKeyRateLimited):
+        // Rate limited — return 429
+    default:
+        // Internal error — return 500
+    }
+}
+```
+
+## Policy violation errors
+
+When a key has an attached policy, the engine checks the policy constraints during validation. Policy violations produce `ErrPolicyViolation` which wraps a more specific message:
+
+```go
+if errors.Is(err, keysmith.ErrPolicyViolation) {
+    // err.Error() contains details like:
+    // "policy violation: IP 203.0.113.5 not in allowlist"
+    // "policy violation: rate limit exceeded (1000/min)"
+}
+```

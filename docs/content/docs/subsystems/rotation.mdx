@@ -1,0 +1,85 @@
+---
+title: Key Rotation
+description: Zero-downtime API key rotation with configurable grace periods.
+---
+
+The rotation subsystem enables zero-downtime API key rotation. When a key is rotated, both the old and new keys validate during a configurable grace period, giving clients time to migrate.
+
+## Rotating a key
+
+```go
+import "github.com/xraph/keysmith/rotation"
+
+newResult, err := eng.RotateKey(ctx,
+    keyID,
+    rotation.ReasonScheduled,
+    24*time.Hour, // grace period
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println("New Key:", newResult.RawKey) // save this — shown once
+```
+
+## Rotation reasons
+
+| Reason | Constant | When to use |
+| ------ | -------- | ----------- |
+| `scheduled` | `rotation.ReasonScheduled` | Regular rotation schedule |
+| `compromised` | `rotation.ReasonCompromised` | Key may have been leaked |
+| `expiring` | `rotation.ReasonExpiring` | Key approaching expiration |
+| `manual` | `rotation.ReasonManual` | Manual rotation by admin |
+
+## Grace period behavior
+
+During the grace period:
+
+1. The **new key** validates normally (state: `active`)
+2. The **old key** still validates (state: `rotated`, within grace window)
+3. After grace expiry, the old key stops validating
+
+```text
+Time ─────────────────────────────────────────────►
+     │ Rotation    │ Grace period      │ Grace expired
+     │             │                   │
+Old: │ active      │ rotated (valid)   │ rotated (invalid)
+New: │ active      │ active            │ active
+```
+
+## Viewing rotation history
+
+```go
+records, err := eng.ListRotations(ctx, keyID, &rotation.ListFilter{
+    Limit: 10,
+})
+
+for _, rec := range records {
+    fmt.Printf("Rotated at %s, reason: %s, grace: %s\n",
+        rec.CreatedAt, rec.Reason, rec.GraceTTL)
+}
+```
+
+## Rotation record fields
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID` | `id.RotationID` | Unique record identifier |
+| `KeyID` | `id.KeyID` | Rotated key |
+| `OldHash` | `string` | Previous key hash |
+| `NewHash` | `string` | New key hash |
+| `Reason` | `Reason` | Why the rotation happened |
+| `GraceTTL` | `time.Duration` | Grace period duration |
+| `GraceExpiry` | `time.Time` | When the grace period ends |
+
+## Rotation store interface
+
+```go
+type Store interface {
+    Create(ctx context.Context, r *Record) error
+    GetByID(ctx context.Context, id id.RotationID) (*Record, error)
+    ListByKeyID(ctx context.Context, keyID id.KeyID, filter *ListFilter) ([]*Record, error)
+    GetActiveGrace(ctx context.Context, oldHash string) (*Record, error)
+    DeleteByKeyID(ctx context.Context, keyID id.KeyID) error
+}
+```

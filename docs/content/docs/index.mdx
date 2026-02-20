@@ -1,0 +1,88 @@
+---
+title: Introduction
+description: Composable API key management for the Forge ecosystem.
+---
+
+Keysmith is a Go library that handles the full lifecycle of API keys: **generation**, **hashing**, **storage**, **validation**, **rotation**, **revocation**, and **usage analytics**. Raw API keys are never persisted -- only their SHA-256 hashes are stored, and the raw key is returned exactly once at creation time.
+
+Keysmith is a **library** -- not a service. You bring your own database and process lifecycle. Keysmith provides the plumbing.
+
+## What it does
+
+- **Secure by default** -- Raw API keys are returned exactly once at creation. Only SHA-256 hashes are stored. Constant-time comparison prevents timing attacks.
+- **Key lifecycle** -- Create, validate, rotate, revoke, suspend, and reactivate API keys. Keys follow a well-defined state machine: active, rotated, expired, revoked, suspended.
+- **Scoped permissions** -- Assign hierarchical permission scopes to keys. Validate that a key has the required scopes before granting access.
+- **Policy engine** -- Rate limits, IP allowlists, origin restrictions, key lifetime constraints, and usage quotas. Attach policies to keys for fine-grained control.
+- **Usage analytics** -- Per-request usage recording with daily and monthly aggregation. Track which keys are being used, how often, and by whom.
+- **Rotation with grace periods** -- Zero-downtime key rotation with configurable grace windows. Old keys remain valid during the grace period while clients migrate.
+- **Plugin system** -- Opt-in lifecycle hooks for audit trails, metrics, and authorization sync. Three built-in plugins: audit hook, observability metrics, and Warden bridge.
+- **Forge integration** -- Mounts as a `forge.Extension` with DI registration, REST API routes, and auto-migration.
+- **Multi-tenant** -- Automatic tenant scoping via Forge scope or standalone context helpers. Cross-tenant data access is structurally impossible.
+
+## Design philosophy
+
+**Library, not service.** Keysmith is a set of Go packages you import. You control `main`, the database connection, and the process lifecycle.
+
+**Interfaces over implementations.** Every subsystem defines a Go interface (`key.Store`, `policy.Store`, `scope.Store`, `usage.Store`, `rotation.Store`). Swap any storage backend with a single type change.
+
+**Composable stores.** The `store.Store` interface composes all five subsystem store interfaces. Pass a single backend value wherever a store is needed, or use different backends for different subsystems.
+
+**Tenant-scoped by design.** The `scope` helpers inject app ID and tenant ID into `context.Context`. Every engine operation reads scope from context -- cross-tenant data access is structurally impossible.
+
+**TypeID everywhere.** All entities use type-prefixed, K-sortable, UUIDv7-based identifiers. Passing an `akey_` ID where a `kpol_` ID is expected fails at parse time.
+
+## Quick look
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/xraph/keysmith"
+    "github.com/xraph/keysmith/key"
+    "github.com/xraph/keysmith/store/memory"
+)
+
+func main() {
+    // Create an engine with an in-memory store.
+    eng, err := keysmith.NewEngine(keysmith.WithStore(memory.New()))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Set tenant context (standalone mode).
+    ctx := keysmith.WithTenant(context.Background(), "my-app", "tenant-1")
+
+    // Create an API key — the raw key is returned only once.
+    result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
+        Name:        "Production Key",
+        Prefix:      "sk",
+        Environment: key.EnvLive,
+        Scopes:      []string{"read:users", "write:users"},
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println("API Key:", result.RawKey)
+
+    // Validate the key.
+    vr, err := eng.ValidateKey(ctx, result.RawKey)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println("Validated for tenant:", vr.Key.TenantID)
+    fmt.Println("Scopes:", vr.Scopes)
+}
+```
+
+## Where to go next
+
+<Cards>
+  <Card title="Getting started" href="/docs/getting-started" description="Install Keysmith and create your first API key in under five minutes." />
+  <Card title="Architecture" href="/docs/architecture" description="Understand how the packages fit together." />
+  <Card title="Core concepts" href="/docs/concepts/entities" description="Learn about Keys, Policies, Scopes, Usage, and Rotation." />
+  <Card title="Stores" href="/docs/stores/memory" description="Configure memory or PostgreSQL store backends." />
+</Cards>

@@ -1,0 +1,77 @@
+---
+title: Policies
+description: Rate limits, IP allowlists, and key lifetime constraints.
+---
+
+The policy subsystem provides fine-grained control over API key behavior. Attach a policy to a key to enforce rate limits, restrict IP addresses, limit origins, and set maximum key lifetimes.
+
+## Creating a policy
+
+```go
+pol, err := eng.CreatePolicy(ctx, &policy.Policy{
+    Name:           "Standard API",
+    RateLimit:      1000,
+    RateWindow:     time.Minute,
+    AllowedIPs:     []string{"10.0.0.0/8", "172.16.0.0/12"},
+    AllowedOrigins: []string{"https://app.example.com"},
+    AllowedScopes:  []string{"read:users", "write:users"},
+    MaxKeyAge:      90 * 24 * time.Hour,
+})
+```
+
+## Policy fields
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `Name` | `string` | Human-readable policy name |
+| `RateLimit` | `int` | Maximum requests per window (0 = unlimited) |
+| `RateWindow` | `time.Duration` | Rate limit window duration |
+| `AllowedIPs` | `[]string` | CIDR-notation IP allowlist (empty = all allowed) |
+| `AllowedOrigins` | `[]string` | HTTP origin allowlist (empty = all allowed) |
+| `AllowedScopes` | `[]string` | Scopes this policy permits |
+| `MaxKeyAge` | `time.Duration` | Maximum key lifetime (0 = no limit) |
+
+## Attaching a policy to a key
+
+Attach a policy at key creation time:
+
+```go
+result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
+    Name:     "Rate-Limited Key",
+    PolicyID: &policyID,
+})
+```
+
+## Policy enforcement during validation
+
+When a key with an attached policy is validated, the engine checks:
+
+1. **Rate limit** -- If `RateLimit > 0` and a `RateLimiter` is configured, the engine checks whether the key has exceeded its rate limit.
+2. **IP allowlist** -- If `AllowedIPs` is non-empty, the request IP must match one of the CIDR ranges.
+3. **Origin allowlist** -- If `AllowedOrigins` is non-empty, the request origin must match.
+4. **Key age** -- If `MaxKeyAge > 0`, the key must not exceed the maximum age.
+
+Policy violations return `ErrPolicyViolation`.
+
+## Updating and deleting policies
+
+```go
+// Update
+pol.RateLimit = 2000
+err := eng.UpdatePolicy(ctx, pol)
+
+// Delete
+err := eng.DeletePolicy(ctx, policyID)
+```
+
+## Policy store interface
+
+```go
+type Store interface {
+    Create(ctx context.Context, p *Policy) error
+    GetByID(ctx context.Context, id id.PolicyID) (*Policy, error)
+    List(ctx context.Context, filter *ListFilter) ([]*Policy, error)
+    Update(ctx context.Context, p *Policy) error
+    Delete(ctx context.Context, id id.PolicyID) error
+}
+```

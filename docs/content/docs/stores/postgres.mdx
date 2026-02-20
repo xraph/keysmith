@@ -1,0 +1,93 @@
+---
+title: PostgreSQL Store
+description: Production PostgreSQL backend using pgx/v5.
+---
+
+The PostgreSQL store provides a full `store.Store` implementation using `pgx/v5` connection pools. It includes embedded SQL migrations and is the recommended backend for production.
+
+## Setup
+
+```go
+import "github.com/xraph/keysmith/store/postgres"
+
+pgStore, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/mydb")
+if err != nil {
+    log.Fatal(err)
+}
+defer pgStore.Close()
+```
+
+## Migrations
+
+The store embeds SQL migrations using `go:embed`. Run them on startup:
+
+```go
+if err := pgStore.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+This creates five tables:
+
+| Table | Description |
+| ----- | ----------- |
+| `keysmith_keys` | API keys with hash, state, and metadata |
+| `keysmith_policies` | Policy definitions |
+| `keysmith_scopes` | Scope definitions |
+| `keysmith_key_scopes` | Key-scope junction table |
+| `keysmith_usage` | Per-request usage records |
+| `keysmith_usage_agg` | Aggregated usage (daily/monthly) |
+| `keysmith_rotations` | Rotation history records |
+
+Migrations are idempotent and safe to run on every startup.
+
+## Connection pooling
+
+The store uses pgx's built-in connection pool. Configure pool settings via the connection string or pgx options:
+
+```go
+// Via connection string
+pgStore, err := postgres.New(ctx,
+    "postgres://user:pass@localhost:5432/mydb?pool_max_conns=20",
+)
+```
+
+## Health checks
+
+```go
+if err := pgStore.Ping(ctx); err != nil {
+    log.Fatal("database unreachable:", err)
+}
+```
+
+## Usage with the engine
+
+```go
+eng, err := keysmith.NewEngine(keysmith.WithStore(pgStore))
+```
+
+## Schema overview
+
+### keysmith_keys
+
+```sql
+CREATE TABLE keysmith_keys (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    hash        TEXT NOT NULL UNIQUE,
+    prefix      TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    state       TEXT NOT NULL DEFAULT 'active',
+    app_id      TEXT NOT NULL,
+    tenant_id   TEXT NOT NULL,
+    policy_id   TEXT,
+    expires_at  TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_keys_hash ON keysmith_keys (hash);
+CREATE INDEX idx_keys_tenant ON keysmith_keys (app_id, tenant_id);
+CREATE INDEX idx_keys_state ON keysmith_keys (state);
+```

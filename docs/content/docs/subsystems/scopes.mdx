@@ -1,0 +1,86 @@
+---
+title: Scopes
+description: Hierarchical permission scopes for API keys.
+---
+
+The scope subsystem manages permission scopes that can be assigned to API keys. Scopes follow a hierarchical naming convention (e.g., `read:users`, `write:users:email`).
+
+## Creating scopes
+
+```go
+scp, err := eng.CreateScope(ctx, &scope.Scope{
+    Name:        "read:users",
+    Description: "Read user profiles",
+})
+```
+
+## Assigning scopes to keys
+
+Scopes can be assigned at key creation time or added later:
+
+```go
+// At creation
+result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
+    Name:   "User API Key",
+    Scopes: []string{"read:users", "write:users"},
+})
+
+// Add scopes later
+err := eng.AssignScopes(ctx, keyID, []string{"read:billing"})
+
+// Remove scopes
+err := eng.RemoveScopes(ctx, keyID, []string{"write:users"})
+```
+
+## Checking scopes during validation
+
+After validating a key, check that it has the required scopes:
+
+```go
+vr, err := eng.ValidateKey(ctx, rawKey)
+if err != nil {
+    return err
+}
+
+// Check for a specific scope
+hasScope := false
+for _, s := range vr.Scopes {
+    if s == "write:users" {
+        hasScope = true
+        break
+    }
+}
+```
+
+Or use the middleware for automatic scope checking:
+
+```go
+import "github.com/xraph/keysmith/middleware"
+
+// Require specific scopes on a route
+mw := middleware.RequireScopes("read:users", "write:users")
+```
+
+## Listing scopes
+
+```go
+scopes, err := eng.ListScopes(ctx, &scope.ListFilter{
+    Limit:  100,
+    Offset: 0,
+})
+```
+
+## Scope store interface
+
+```go
+type Store interface {
+    Create(ctx context.Context, s *Scope) error
+    GetByID(ctx context.Context, id id.ScopeID) (*Scope, error)
+    List(ctx context.Context, filter *ListFilter) ([]*Scope, error)
+    Delete(ctx context.Context, id id.ScopeID) error
+    AssignToKey(ctx context.Context, keyID id.KeyID, scopeNames []string) error
+    RemoveFromKey(ctx context.Context, keyID id.KeyID, scopeNames []string) error
+    GetByKeyID(ctx context.Context, keyID id.KeyID) ([]*Scope, error)
+    ListByNames(ctx context.Context, names []string) ([]*Scope, error)
+}
+```

@@ -1,0 +1,110 @@
+---
+title: Plugin System
+description: Opt-in lifecycle hooks for audit, metrics, and authorization.
+---
+
+Keysmith uses an opt-in plugin system. Plugins implement `plugin.Plugin` (which requires only `Name()`) and any combination of lifecycle hooks. The `plugin.Manager` discovers capabilities via type assertion at registration time.
+
+## Registering plugins
+
+```go
+eng, _ := keysmith.NewEngine(
+    keysmith.WithStore(store),
+    keysmith.WithExtension(audithook.New(myRecorder)),
+    keysmith.WithExtension(observability.NewMetricsExtension()),
+    keysmith.WithExtension(wardenhook.New(bridge)),
+)
+```
+
+## Writing a custom plugin
+
+A plugin is any type that implements `plugin.Plugin` and one or more hook interfaces:
+
+```go
+import (
+    "context"
+    "github.com/xraph/keysmith/plugin"
+    "github.com/xraph/keysmith/key"
+)
+
+type SlackNotifier struct {
+    webhookURL string
+}
+
+func (s *SlackNotifier) Name() string { return "slack-notifier" }
+
+func (s *SlackNotifier) OnKeyCreated(ctx context.Context, k *key.Key) error {
+    return postToSlack(s.webhookURL, fmt.Sprintf("New API key created: %s", k.Name))
+}
+
+func (s *SlackNotifier) OnKeyRevoked(ctx context.Context, k *key.Key, reason string) error {
+    return postToSlack(s.webhookURL, fmt.Sprintf("API key revoked: %s (reason: %s)", k.Name, reason))
+}
+```
+
+## Available hooks
+
+| Hook | Interface | Signature |
+| ---- | --------- | --------- |
+| Key created | `plugin.KeyCreated` | `OnKeyCreated(ctx, *key.Key) error` |
+| Key creation failed | `plugin.KeyCreateFailed` | `OnKeyCreateFailed(ctx, *key.Key, error) error` |
+| Key validated | `plugin.KeyValidated` | `OnKeyValidated(ctx, *key.Key) error` |
+| Key validation failed | `plugin.KeyValidationFailed` | `OnKeyValidationFailed(ctx, string, error) error` |
+| Key rotated | `plugin.KeyRotated` | `OnKeyRotated(ctx, *key.Key, *rotation.Record) error` |
+| Key revoked | `plugin.KeyRevoked` | `OnKeyRevoked(ctx, *key.Key, string) error` |
+| Key suspended | `plugin.KeySuspended` | `OnKeySuspended(ctx, *key.Key) error` |
+| Key reactivated | `plugin.KeyReactivated` | `OnKeyReactivated(ctx, *key.Key) error` |
+| Key expired | `plugin.KeyExpired` | `OnKeyExpired(ctx, *key.Key) error` |
+| Key rate limited | `plugin.KeyRateLimited` | `OnKeyRateLimited(ctx, *key.Key) error` |
+| Policy created | `plugin.PolicyCreated` | `OnPolicyCreated(ctx, *policy.Policy) error` |
+| Policy updated | `plugin.PolicyUpdated` | `OnPolicyUpdated(ctx, *policy.Policy) error` |
+| Policy deleted | `plugin.PolicyDeleted` | `OnPolicyDeleted(ctx, id.PolicyID) error` |
+| Shutdown | `plugin.Shutdown` | `OnShutdown(ctx) error` |
+
+## Built-in plugins
+
+### Audit Hook
+
+Emits structured audit events to a `Recorder` backend for every lifecycle event.
+
+```go
+import audithook "github.com/xraph/keysmith/audit_hook"
+
+recorder := audithook.RecorderFunc(func(ctx context.Context, evt *audithook.AuditEvent) error {
+    log.Printf("[%s] %s %s: %s", evt.Severity, evt.Action, evt.ResourceID, evt.Outcome)
+    return nil
+})
+
+eng, _ := keysmith.NewEngine(
+    keysmith.WithStore(store),
+    keysmith.WithExtension(audithook.New(recorder)),
+)
+```
+
+### Observability Metrics
+
+Increments go-utils metric counters for each lifecycle event.
+
+```go
+import "github.com/xraph/keysmith/observability"
+
+eng, _ := keysmith.NewEngine(
+    keysmith.WithStore(store),
+    keysmith.WithExtension(observability.NewMetricsExtension()),
+)
+```
+
+### Warden Hook
+
+Bridges Keysmith key lifecycle events to Warden authorization. Syncs scopes as Warden permissions and assigns roles to API key subjects.
+
+```go
+import wardenhook "github.com/xraph/keysmith/warden_hook"
+
+eng, _ := keysmith.NewEngine(
+    keysmith.WithStore(store),
+    keysmith.WithExtension(wardenhook.New(wardenBridge,
+        wardenhook.WithDefaultRole("api-consumer"),
+    )),
+)
+```

@@ -1,0 +1,122 @@
+---
+title: Keys
+description: API key creation, validation, rotation, and lifecycle management.
+---
+
+The key subsystem is the core of Keysmith. It handles the full lifecycle of API keys from creation through revocation.
+
+## Creating keys
+
+```go
+result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
+    Name:        "Production Key",
+    Prefix:      "sk",
+    Environment: key.EnvLive,
+    Scopes:      []string{"read:users", "write:users"},
+})
+```
+
+The `CreateKeyInput` struct accepts:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `Name` | `string` | Human-readable key name |
+| `Prefix` | `string` | Key prefix (defaults to "sk") |
+| `Environment` | `key.Environment` | live, test, or dev |
+| `Scopes` | `[]string` | Permission scopes to assign |
+| `PolicyID` | `*id.PolicyID` | Optional policy to attach |
+| `ExpiresAt` | `*time.Time` | Optional expiration time |
+
+The result contains the raw key (shown once) and the key metadata:
+
+```go
+fmt.Println(result.RawKey)  // sk_live_a3f8b2c9e1d4...
+fmt.Println(result.Key.ID)  // akey_01h2xce...
+```
+
+## Validating keys
+
+```go
+vr, err := eng.ValidateKey(ctx, rawKey)
+if err != nil {
+    // Handle ErrKeyNotFound, ErrKeyExpired, etc.
+}
+
+fmt.Println(vr.Key.ID)       // akey_01h2xce...
+fmt.Println(vr.Key.TenantID) // tenant-1
+fmt.Println(vr.Key.State)    // active
+fmt.Println(vr.Scopes)       // [read:users write:users]
+```
+
+Validation performs these checks in order:
+
+1. Hash the raw key with SHA-256
+2. Look up the hash in the store
+3. Check key state (must be `active` or within rotation grace period)
+4. Check expiration
+5. Enforce attached policy (rate limits, IP allowlist, etc.)
+6. Fire `KeyValidated` or `KeyValidationFailed` hooks
+7. Record usage
+
+## Rotating keys
+
+```go
+newResult, err := eng.RotateKey(ctx,
+    keyID,
+    rotation.ReasonScheduled,
+    24*time.Hour, // grace period
+)
+```
+
+During rotation:
+- A new key is generated and returned
+- The old key state transitions to `rotated`
+- Both old and new keys validate during the grace period
+- After grace expiry, only the new key validates
+
+## Revoking keys
+
+```go
+err := eng.RevokeKey(ctx, keyID, "compromised")
+```
+
+Revocation is permanent. The key state transitions to `revoked` and can never be used again.
+
+## Suspending and reactivating keys
+
+```go
+// Suspend
+err := eng.SuspendKey(ctx, keyID)
+
+// Reactivate
+err := eng.ReactivateKey(ctx, keyID)
+```
+
+Suspension is temporary. A suspended key returns `ErrKeySuspended` during validation and can be reactivated later.
+
+## Listing keys
+
+```go
+keys, err := eng.ListKeys(ctx, &key.ListFilter{
+    State:       key.StateActive,
+    Environment: key.EnvLive,
+    Limit:       50,
+    Offset:      0,
+})
+```
+
+## Key store interface
+
+The `key.Store` interface defines the storage contract:
+
+```go
+type Store interface {
+    Create(ctx context.Context, k *Key) error
+    GetByID(ctx context.Context, id id.KeyID) (*Key, error)
+    GetByHash(ctx context.Context, hash string) (*Key, error)
+    List(ctx context.Context, filter *ListFilter) ([]*Key, error)
+    UpdateState(ctx context.Context, id id.KeyID, state State) error
+    UpdateLastUsed(ctx context.Context, id id.KeyID, t time.Time) error
+    Delete(ctx context.Context, id id.KeyID) error
+}
+```

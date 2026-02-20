@@ -1,0 +1,77 @@
+---
+title: Configuration
+description: Configuring a Keysmith engine instance.
+---
+
+Keysmith uses the functional options pattern for engine construction.
+
+## Default configuration
+
+```go
+type Config struct {
+    DefaultPrefix      string          // "sk"
+    DefaultEnvironment key.Environment // key.EnvLive
+    DefaultKeyLength   int             // 64 (hex characters)
+}
+```
+
+## Engine options
+
+```go
+eng, err := keysmith.NewEngine(
+    keysmith.WithStore(store),
+    keysmith.WithHasher(customHasher),
+    keysmith.WithKeyGenerator(customGen),
+    keysmith.WithRateLimiter(limiter),
+    keysmith.WithExtension(auditPlugin),
+    keysmith.WithLogger(logger),
+)
+```
+
+| Option | Description |
+| ------ | ----------- |
+| `WithStore(store.Store)` | **Required.** Sets the composite store backend. |
+| `WithHasher(Hasher)` | Custom key hasher. Defaults to SHA-256. |
+| `WithKeyGenerator(KeyGenerator)` | Custom key generator. Defaults to `{prefix}_{env}_{64 hex}`. |
+| `WithRateLimiter(RateLimiter)` | Pluggable rate limiter for validation. No default. |
+| `WithExtension(plugin.Plugin)` | Registers a lifecycle plugin. |
+| `WithLogger(*slog.Logger)` | Structured logger. Defaults to `slog.Default()`. |
+
+## Key format
+
+The default key generator produces keys in the format:
+
+```text
+{prefix}_{environment}_{64 hex characters}
+```
+
+Example: `sk_live_a3f8b2c9e1d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0`
+
+## Pluggable interfaces
+
+### Hasher
+
+```go
+type Hasher interface {
+    Hash(rawKey string) string
+    Verify(rawKey, hash string) bool
+}
+```
+
+The default uses SHA-256 with constant-time comparison.
+
+### KeyGenerator
+
+```go
+type KeyGenerator interface {
+    Generate(prefix string, env key.Environment) (string, error)
+}
+```
+
+### RateLimiter
+
+```go
+type RateLimiter interface {
+    Allow(ctx context.Context, keyID string, limit int, window time.Duration) (bool, error)
+}
+```

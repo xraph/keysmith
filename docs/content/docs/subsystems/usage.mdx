@@ -1,0 +1,93 @@
+---
+title: Usage Analytics
+description: Per-request usage recording with daily and monthly aggregation.
+---
+
+The usage subsystem tracks every API key request and provides aggregated analytics for monitoring and billing.
+
+## Recording usage
+
+Usage is automatically recorded during key validation. You can also record usage manually:
+
+```go
+err := eng.RecordUsage(ctx, &usage.Record{
+    KeyID:      keyID,
+    Endpoint:   "/api/v1/users",
+    Method:     "GET",
+    StatusCode: 200,
+    IP:         "10.0.0.1",
+    UserAgent:  "MyApp/1.0",
+})
+```
+
+## Querying usage
+
+### Per-key usage
+
+```go
+records, err := eng.GetKeyUsage(ctx, keyID, &usage.QueryFilter{
+    From:  time.Now().Add(-24 * time.Hour),
+    To:    time.Now(),
+    Limit: 100,
+})
+```
+
+### Aggregated usage
+
+Get daily or monthly usage summaries:
+
+```go
+agg, err := eng.GetUsageAggregation(ctx, keyID, &usage.QueryFilter{
+    From:        time.Now().Add(-30 * 24 * time.Hour),
+    To:          time.Now(),
+    Granularity: "daily",
+})
+
+for _, bucket := range agg {
+    fmt.Printf("%s: %d requests\n", bucket.Period, bucket.Count)
+}
+```
+
+### Tenant-wide usage
+
+```go
+records, err := eng.ListTenantUsage(ctx, &usage.QueryFilter{
+    From:  time.Now().Add(-7 * 24 * time.Hour),
+    To:    time.Now(),
+    Limit: 1000,
+})
+```
+
+## Usage record fields
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `ID` | `id.UsageID` | Unique record identifier |
+| `KeyID` | `id.KeyID` | Associated API key |
+| `Endpoint` | `string` | Requested endpoint |
+| `Method` | `string` | HTTP method |
+| `StatusCode` | `int` | Response status code |
+| `IP` | `string` | Client IP address |
+| `UserAgent` | `string` | Client user agent |
+| `Timestamp` | `time.Time` | Request timestamp |
+
+## Aggregation fields
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `KeyID` | `id.KeyID` | Associated API key |
+| `Period` | `string` | Aggregation period (e.g., "2024-01-15") |
+| `Count` | `int64` | Total request count |
+| `ErrorCount` | `int64` | Total error count (4xx/5xx) |
+
+## Usage store interface
+
+```go
+type Store interface {
+    Record(ctx context.Context, r *Record) error
+    GetByKeyID(ctx context.Context, keyID id.KeyID, filter *QueryFilter) ([]*Record, error)
+    GetAggregation(ctx context.Context, keyID id.KeyID, filter *QueryFilter) ([]*Aggregation, error)
+    ListByTenant(ctx context.Context, filter *QueryFilter) ([]*Record, error)
+    DeleteByKeyID(ctx context.Context, keyID id.KeyID) error
+}
+```

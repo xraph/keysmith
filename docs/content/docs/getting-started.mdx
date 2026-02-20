@@ -1,0 +1,147 @@
+---
+title: Getting Started
+description: Install Keysmith and create your first API key in under five minutes.
+---
+
+This guide walks you through installing Keysmith, creating an API key, validating it, and setting up policies. By the end you will have a working program that exercises the core key management lifecycle.
+
+## Prerequisites
+
+- **Go 1.24+** (the module uses `go 1.25.7` but any recent version works)
+- A Go module (`go mod init`)
+
+## Install
+
+```bash
+go get github.com/xraph/keysmith
+```
+
+This pulls in the root module and all sub-packages (`key`, `policy`, `scope`, `usage`, `rotation`, `plugin`, `store/memory`, etc.).
+
+## Step 1 -- Create a store
+
+Every Keysmith operation needs a store backend. Start with the in-memory store for development and testing.
+
+```go
+import "github.com/xraph/keysmith/store/memory"
+
+store := memory.New()
+```
+
+The `memory.Store` implements the full `store.Store` composite interface -- keys, policies, scopes, usage, and rotation -- all in-process with no external dependencies.
+
+## Step 2 -- Create the engine
+
+The `keysmith.Engine` is the central coordinator. It connects a store, a hasher, a key generator, and an optional rate limiter.
+
+```go
+import "github.com/xraph/keysmith"
+
+eng, err := keysmith.NewEngine(keysmith.WithStore(store))
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+## Step 3 -- Set the tenant context
+
+Keysmith uses `context.Context` to carry tenant scope across all operations. Use the `WithTenant` helper to inject app ID and tenant ID.
+
+```go
+ctx := keysmith.WithTenant(context.Background(), "my-app", "tenant-1")
+```
+
+Or if using the Forge framework, scope is extracted automatically from `forge.Scope`.
+
+## Step 4 -- Create an API key
+
+```go
+import "github.com/xraph/keysmith/key"
+
+result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
+    Name:        "Production Key",
+    Prefix:      "sk",
+    Environment: key.EnvLive,
+    Scopes:      []string{"read:users", "write:users"},
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println("API Key:", result.RawKey)
+// Output: API Key: sk_live_a3f8b2c9e1d4...
+// Save this key — it will never be shown again.
+```
+
+The raw key is returned exactly once. Only the SHA-256 hash is stored in the database.
+
+## Step 5 -- Validate a key
+
+When a request comes in with an API key, validate it against the store.
+
+```go
+vr, err := eng.ValidateKey(ctx, result.RawKey)
+if err != nil {
+    log.Fatal("invalid key:", err)
+}
+
+fmt.Println("Key ID:", vr.Key.ID)
+fmt.Println("Tenant:", vr.Key.TenantID)
+fmt.Println("State:", vr.Key.State)
+fmt.Println("Scopes:", vr.Scopes)
+// Output:
+// Key ID: akey_01h2xce...
+// Tenant: tenant-1
+// State: active
+// Scopes: [read:users write:users]
+```
+
+## Step 6 -- Rotate a key
+
+Rotate a key with a grace period. Both old and new keys will validate during the grace window.
+
+```go
+import "github.com/xraph/keysmith/rotation"
+
+newResult, err := eng.RotateKey(ctx,
+    vr.Key.ID,
+    rotation.ReasonScheduled,
+    24*time.Hour, // grace period
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Println("New Key:", newResult.RawKey)
+// The old key remains valid for 24 hours.
+```
+
+## Step 7 -- Switch to PostgreSQL
+
+When you are ready for production, swap the memory store for PostgreSQL. The API does not change.
+
+```go
+import "github.com/xraph/keysmith/store/postgres"
+
+pgStore, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/mydb")
+if err != nil {
+    log.Fatal(err)
+}
+defer pgStore.Close()
+
+// Run embedded migrations to create all Keysmith tables.
+if err := pgStore.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+
+// Use pgStore everywhere you previously used memory.New().
+eng, _ := keysmith.NewEngine(keysmith.WithStore(pgStore))
+```
+
+## Next steps
+
+- [Architecture](/docs/architecture) -- Understand the package dependency graph and request flow.
+- [Entities](/docs/concepts/entities) -- Learn about the core data types (Key, Policy, Scope, Usage, Rotation).
+- [Multi-tenancy](/docs/concepts/multi-tenancy) -- How context-based tenant isolation works across all subsystems.
+- [Plugins](/docs/subsystems/plugins) -- Extend Keysmith with audit trails, metrics, and Warden authorization sync.
+- [REST API](/docs/api-reference/rest-api) -- Mount the full API key management REST API via Forge.

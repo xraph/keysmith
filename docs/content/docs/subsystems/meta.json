@@ -1,0 +1,12 @@
+{
+  "title": "Subsystems",
+  "pages": [
+    "keys",
+    "policies",
+    "scopes",
+    "usage",
+    "rotation",
+    "plugins",
+    "observability"
+  ]
+}

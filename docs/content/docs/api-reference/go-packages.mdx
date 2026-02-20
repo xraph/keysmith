@@ -1,0 +1,86 @@
+---
+title: Go Package Reference
+description: Complete Go package index for Keysmith.
+---
+
+## Package index
+
+| Package | Import path | Purpose |
+| ------- | ----------- | ------- |
+| `keysmith` | `github.com/xraph/keysmith` | Core engine, types, hasher, generator, scope helpers |
+| `key` | `github.com/xraph/keysmith/key` | Key entity, lifecycle states, store interface |
+| `policy` | `github.com/xraph/keysmith/policy` | Policy entity, store interface |
+| `scope` | `github.com/xraph/keysmith/scope` | Scope entity, key-scope assignment, store interface |
+| `usage` | `github.com/xraph/keysmith/usage` | Usage records, aggregation, store interface |
+| `rotation` | `github.com/xraph/keysmith/rotation` | Rotation records, reasons, store interface |
+| `id` | `github.com/xraph/keysmith/id` | TypeID-based entity identifiers (akey, kpol, kusg, krot, kscp) |
+| `store` | `github.com/xraph/keysmith/store` | Composite store interface embedding all sub-stores |
+| `store/memory` | `github.com/xraph/keysmith/store/memory` | In-memory store for testing |
+| `store/postgres` | `github.com/xraph/keysmith/store/postgres` | PostgreSQL store with embedded migrations |
+| `plugin` | `github.com/xraph/keysmith/plugin` | Lifecycle hook interfaces and dispatch manager |
+| `audit_hook` | `github.com/xraph/keysmith/audit_hook` | Audit trail plugin |
+| `observability` | `github.com/xraph/keysmith/observability` | Metrics plugin (go-utils counters) |
+| `warden_hook` | `github.com/xraph/keysmith/warden_hook` | Warden authorization bridge plugin |
+| `api` | `github.com/xraph/keysmith/api` | Forge-style REST API handlers with OpenAPI metadata |
+| `middleware` | `github.com/xraph/keysmith/middleware` | HTTP middleware for API key validation and scope checks |
+| `extension` | `github.com/xraph/keysmith/extension` | Forge extension adapter (DI, routes, migration) |
+
+## Core types
+
+### keysmith.Engine
+
+The central engine that coordinates all subsystems.
+
+```go
+func NewEngine(opts ...Option) (*Engine, error)
+
+func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.CreateResult, error)
+func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationResult, error)
+func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, graceTTL time.Duration) (*key.CreateResult, error)
+func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) error
+func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error
+func (e *Engine) ReactivateKey(ctx context.Context, keyID id.KeyID) error
+func (e *Engine) GetKey(ctx context.Context, keyID id.KeyID) (*key.Key, error)
+func (e *Engine) ListKeys(ctx context.Context, filter *key.ListFilter) ([]*key.Key, error)
+```
+
+### keysmith.CreateKeyInput
+
+```go
+type CreateKeyInput struct {
+    Name        string
+    Prefix      string
+    Environment key.Environment
+    Scopes      []string
+    PolicyID    *id.PolicyID
+    ExpiresAt   *time.Time
+}
+```
+
+### keysmith.ValidationResult
+
+```go
+type ValidationResult struct {
+    Key    *key.Key
+    Scopes []string
+}
+```
+
+## Context helpers
+
+```go
+func WithTenant(ctx context.Context, appID, tenantID string) context.Context
+func AppIDFromContext(ctx context.Context) string
+func TenantIDFromContext(ctx context.Context) string
+```
+
+## Functional options
+
+```go
+func WithStore(s store.Store) Option
+func WithHasher(h Hasher) Option
+func WithKeyGenerator(g KeyGenerator) Option
+func WithRateLimiter(r RateLimiter) Option
+func WithExtension(p plugin.Plugin) Option
+func WithLogger(l *slog.Logger) Option
+```

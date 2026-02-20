@@ -1,0 +1,158 @@
+---
+title: Full Example
+description: End-to-end example using key creation, validation, rotation, policies, and scopes.
+---
+
+This example demonstrates all major Keysmith subsystems working together in a single program.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/xraph/keysmith"
+    "github.com/xraph/keysmith/key"
+    "github.com/xraph/keysmith/policy"
+    "github.com/xraph/keysmith/rotation"
+    "github.com/xraph/keysmith/store/memory"
+    audithook "github.com/xraph/keysmith/audit_hook"
+    "github.com/xraph/keysmith/observability"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // ── 1. Create an audit recorder ───────────────────
+    recorder := audithook.RecorderFunc(func(ctx context.Context, evt *audithook.AuditEvent) error {
+        fmt.Printf("  [audit] %s %s → %s\n", evt.Action, evt.ResourceID, evt.Outcome)
+        return nil
+    })
+
+    // ── 2. Create the engine with plugins ─────────────
+    store := memory.New()
+    eng, err := keysmith.NewEngine(
+        keysmith.WithStore(store),
+        keysmith.WithExtension(audithook.New(recorder)),
+        keysmith.WithExtension(observability.NewMetricsExtension()),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // ── 3. Set tenant context ─────────────────────────
+    ctx = keysmith.WithTenant(ctx, "my-app", "tenant-1")
+
+    // ── 4. Create a policy ────────────────────────────
+    fmt.Println("=== Creating policy ===")
+    pol := &policy.Policy{
+        Name:       "Standard API",
+        RateLimit:  1000,
+        RateWindow: time.Minute,
+        MaxKeyAge:  90 * 24 * time.Hour,
+    }
+    if err := eng.CreatePolicy(ctx, pol); err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Policy: %s (rate: %d/min)\n\n", pol.Name, pol.RateLimit)
+
+    // ── 5. Create an API key ──────────────────────────
+    fmt.Println("=== Creating API key ===")
+    result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
+        Name:        "Production Key",
+        Prefix:      "sk",
+        Environment: key.EnvLive,
+        Scopes:      []string{"read:users", "write:users"},
+        PolicyID:    &pol.ID,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Raw Key: %s\n", result.RawKey)
+    fmt.Printf("Key ID:  %s\n\n", result.Key.ID)
+
+    // ── 6. Validate the key ───────────────────────────
+    fmt.Println("=== Validating key ===")
+    vr, err := eng.ValidateKey(ctx, result.RawKey)
+    if err != nil {
+        log.Fatal("validation failed:", err)
+    }
+    fmt.Printf("Tenant:  %s\n", vr.Key.TenantID)
+    fmt.Printf("State:   %s\n", vr.Key.State)
+    fmt.Printf("Scopes:  %v\n\n", vr.Scopes)
+
+    // ── 7. Rotate the key ─────────────────────────────
+    fmt.Println("=== Rotating key ===")
+    newResult, err := eng.RotateKey(ctx,
+        result.Key.ID,
+        rotation.ReasonScheduled,
+        1*time.Hour,
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("New Key: %s\n", newResult.RawKey)
+    fmt.Println("Old key valid for 1 hour (grace period)\n")
+
+    // ── 8. Validate old key (still valid during grace) ─
+    fmt.Println("=== Validating old key (grace period) ===")
+    vr2, err := eng.ValidateKey(ctx, result.RawKey)
+    if err != nil {
+        fmt.Printf("Old key invalid: %v\n\n", err)
+    } else {
+        fmt.Printf("Old key still valid: state=%s\n\n", vr2.Key.State)
+    }
+
+    // ── 9. Revoke the old key ─────────────────────────
+    fmt.Println("=== Revoking old key ===")
+    if err := eng.RevokeKey(ctx, result.Key.ID, "replaced"); err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println("Old key revoked.\n")
+
+    // ── 10. Validate revoked key (should fail) ────────
+    fmt.Println("=== Validating revoked key ===")
+    _, err = eng.ValidateKey(ctx, result.RawKey)
+    if err != nil {
+        fmt.Printf("Expected error: %v\n", err)
+    }
+}
+```
+
+## Expected output
+
+```text
+=== Creating policy ===
+  [audit] keysmith.policy.created kpol_01h... → success
+Policy: Standard API (rate: 1000/min)
+
+=== Creating API key ===
+  [audit] keysmith.key.created akey_01h... → success
+Raw Key: sk_live_a3f8b2c9...
+Key ID:  akey_01h...
+
+=== Validating key ===
+  [audit] keysmith.key.validated akey_01h... → success
+Tenant:  tenant-1
+State:   active
+Scopes:  [read:users write:users]
+
+=== Rotating key ===
+  [audit] keysmith.key.rotated akey_01h... → success
+New Key: sk_live_d7e8f9a0...
+Old key valid for 1 hour (grace period)
+
+=== Validating old key (grace period) ===
+  [audit] keysmith.key.validated akey_01h... → success
+Old key still valid: state=rotated
+
+=== Revoking old key ===
+  [audit] keysmith.key.revoked akey_01h... → success
+Old key revoked.
+
+=== Validating revoked key ===
+Expected error: key revoked
+```

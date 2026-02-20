@@ -1,0 +1,262 @@
+---
+title: REST API
+description: Keysmith REST API endpoints for key management.
+---
+
+When mounted via the Forge extension, Keysmith exposes a complete REST API for managing API keys, policies, scopes, usage, and rotations.
+
+## Keys
+
+### Create API key
+
+```
+POST /v1/keys
+```
+
+**Request body:**
+
+```json
+{
+  "name": "Production Key",
+  "prefix": "sk",
+  "environment": "live",
+  "scopes": ["read:users", "write:users"],
+  "policy_id": "kpol_01h2xce...",
+  "expires_at": "2025-12-31T23:59:59Z"
+}
+```
+
+**Response (201):**
+
+```json
+{
+  "raw_key": "sk_live_a3f8b2c9e1d4...",
+  "key": {
+    "id": "akey_01h2xce...",
+    "name": "Production Key",
+    "prefix": "sk",
+    "environment": "live",
+    "state": "active",
+    "scopes": ["read:users", "write:users"],
+    "created_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+### List API keys
+
+```
+GET /v1/keys?limit=50&offset=0&state=active&environment=live
+```
+
+### Get API key
+
+```
+GET /v1/keys/:keyId
+```
+
+### Delete API key
+
+```
+DELETE /v1/keys/:keyId
+```
+
+### Validate API key
+
+```
+POST /v1/keys/validate
+```
+
+**Request body:**
+
+```json
+{
+  "raw_key": "sk_live_a3f8b2c9e1d4..."
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "valid": true,
+  "key": {
+    "id": "akey_01h2xce...",
+    "name": "Production Key",
+    "state": "active",
+    "tenant_id": "tenant-1"
+  },
+  "scopes": ["read:users", "write:users"]
+}
+```
+
+### Rotate API key
+
+```
+POST /v1/keys/:keyId/rotate
+```
+
+**Request body:**
+
+```json
+{
+  "reason": "scheduled",
+  "grace_period": "24h"
+}
+```
+
+### Revoke API key
+
+```
+POST /v1/keys/:keyId/revoke
+```
+
+**Request body:**
+
+```json
+{
+  "reason": "compromised"
+}
+```
+
+### Suspend API key
+
+```
+POST /v1/keys/:keyId/suspend
+```
+
+### Reactivate API key
+
+```
+POST /v1/keys/:keyId/reactivate
+```
+
+## Policies
+
+### Create policy
+
+```
+POST /v1/policies
+```
+
+**Request body:**
+
+```json
+{
+  "name": "Standard API",
+  "rate_limit": 1000,
+  "rate_window": "1m",
+  "allowed_ips": ["10.0.0.0/8"],
+  "allowed_origins": ["https://app.example.com"],
+  "max_key_age": "2160h"
+}
+```
+
+### List policies
+
+```
+GET /v1/policies?limit=50&offset=0
+```
+
+### Get policy
+
+```
+GET /v1/policies/:policyId
+```
+
+### Update policy
+
+```
+PUT /v1/policies/:policyId
+```
+
+### Delete policy
+
+```
+DELETE /v1/policies/:policyId
+```
+
+## Scopes
+
+### Create scope
+
+```
+POST /v1/scopes
+```
+
+**Request body:**
+
+```json
+{
+  "name": "read:users",
+  "description": "Read user profiles"
+}
+```
+
+### List scopes
+
+```
+GET /v1/scopes?limit=100&offset=0
+```
+
+### Delete scope
+
+```
+DELETE /v1/scopes/:scopeId
+```
+
+### Assign scopes to key
+
+```
+POST /v1/keys/:keyId/scopes
+```
+
+**Request body:**
+
+```json
+{
+  "scopes": ["read:billing", "write:billing"]
+}
+```
+
+### Remove scopes from key
+
+```
+DELETE /v1/keys/:keyId/scopes
+```
+
+**Request body:**
+
+```json
+{
+  "scopes": ["write:billing"]
+}
+```
+
+## Usage
+
+### Get key usage
+
+```
+GET /v1/keys/:keyId/usage?from=2024-01-01T00:00:00Z&to=2024-01-31T23:59:59Z&limit=100
+```
+
+### Get usage aggregation
+
+```
+GET /v1/keys/:keyId/usage/aggregate?from=2024-01-01T00:00:00Z&to=2024-01-31T23:59:59Z&granularity=daily
+```
+
+### List tenant usage
+
+```
+GET /v1/usage?from=2024-01-01T00:00:00Z&to=2024-01-31T23:59:59Z&limit=1000
+```
+
+## Rotations
+
+### List key rotations
+
+```
+GET /v1/keys/:keyId/rotations?limit=10
+```

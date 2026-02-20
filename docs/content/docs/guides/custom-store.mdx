@@ -1,0 +1,117 @@
+---
+title: Custom Store
+description: Implementing a custom Keysmith store backend.
+---
+
+Keysmith defines a composite `store.Store` interface that embeds five subsystem store interfaces plus lifecycle methods. Implement this interface to add a new storage backend.
+
+## Composite store interface
+
+```go
+import "github.com/xraph/keysmith/store"
+
+type Store interface {
+    Keys() key.Store
+    Policies() policy.Store
+    Scopes() scope.Store
+    Usage() usage.Store
+    Rotations() rotation.Store
+
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
+}
+```
+
+The accessor pattern (`Keys()`, `Policies()`, etc.) avoids method name collisions when composing five store interfaces into one.
+
+## Implementing a custom store
+
+### Step 1: Implement each subsystem store
+
+Start with the key store, which is the most critical:
+
+```go
+type MyKeyStore struct {
+    // your backend connection
+}
+
+func (s *MyKeyStore) Create(ctx context.Context, k *key.Key) error {
+    // Insert key into your backend
+}
+
+func (s *MyKeyStore) GetByHash(ctx context.Context, hash string) (*key.Key, error) {
+    // Look up key by SHA-256 hash
+}
+
+// ... implement remaining methods
+```
+
+### Step 2: Compose into a Store
+
+```go
+type MyStore struct {
+    keys      *MyKeyStore
+    policies  *MyPolicyStore
+    scopes    *MyScopeStore
+    usage     *MyUsageStore
+    rotations *MyRotationStore
+}
+
+func (s *MyStore) Keys() key.Store         { return s.keys }
+func (s *MyStore) Policies() policy.Store   { return s.policies }
+func (s *MyStore) Scopes() scope.Store      { return s.scopes }
+func (s *MyStore) Usage() usage.Store       { return s.usage }
+func (s *MyStore) Rotations() rotation.Store { return s.rotations }
+
+func (s *MyStore) Migrate(ctx context.Context) error { return nil }
+func (s *MyStore) Ping(ctx context.Context) error    { return nil }
+func (s *MyStore) Close() error                       { return nil }
+```
+
+### Step 3: Use with the engine
+
+```go
+eng, err := keysmith.NewEngine(keysmith.WithStore(&MyStore{...}))
+```
+
+## Key store interface (critical path)
+
+The `key.Store.GetByHash` method is the hot path for validation. Ensure it is optimized for O(1) or O(log n) lookup:
+
+```go
+type Store interface {
+    Create(ctx context.Context, k *Key) error
+    GetByID(ctx context.Context, id id.KeyID) (*Key, error)
+    GetByHash(ctx context.Context, hash string) (*Key, error)
+    List(ctx context.Context, filter *ListFilter) ([]*Key, error)
+    UpdateState(ctx context.Context, id id.KeyID, state State) error
+    UpdateLastUsed(ctx context.Context, id id.KeyID, t time.Time) error
+    Delete(ctx context.Context, id id.KeyID) error
+}
+```
+
+## Testing your store
+
+Use the existing engine tests as a harness. Replace `memory.New()` with your custom store:
+
+```go
+func TestMyStore(t *testing.T) {
+    store := NewMyStore(...)
+    eng, err := keysmith.NewEngine(keysmith.WithStore(store))
+    require.NoError(t, err)
+
+    ctx := keysmith.WithTenant(context.Background(), "test-app", "test-tenant")
+
+    // Run through the key lifecycle
+    result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
+        Name:   "Test Key",
+        Prefix: "sk",
+    })
+    require.NoError(t, err)
+
+    vr, err := eng.ValidateKey(ctx, result.RawKey)
+    require.NoError(t, err)
+    assert.Equal(t, "test-tenant", vr.Key.TenantID)
+}
+```

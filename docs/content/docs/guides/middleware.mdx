@@ -1,0 +1,83 @@
+---
+title: HTTP Middleware
+description: Protecting routes with API key validation and scope checks.
+---
+
+The `middleware` package provides Forge-compatible HTTP middleware for API key validation and scope enforcement.
+
+## API key authentication
+
+The `APIKeyAuth` middleware extracts an API key from the `Authorization` header (Bearer token) or `X-API-Key` header, validates it, and stores the result in the request context.
+
+```go
+import "github.com/xraph/keysmith/middleware"
+
+// Create the middleware
+auth := middleware.APIKeyAuth(eng)
+
+// Apply to routes
+app.Use(auth)
+```
+
+### Key extraction
+
+The middleware looks for the API key in this order:
+
+1. `Authorization: Bearer sk_live_...` header
+2. `X-API-Key: sk_live_...` header
+
+If no key is found, it returns `401 Unauthorized`.
+
+## Scope enforcement
+
+The `RequireScopes` middleware checks that the validated key has all the required scopes.
+
+```go
+// Require specific scopes
+protected := middleware.RequireScopes("read:users", "write:users")
+
+// Chain with auth
+app.Use(auth, protected)
+```
+
+If the key does not have the required scopes, it returns `403 Forbidden`.
+
+## Accessing the validation result
+
+After the middleware validates a key, the validation result is available from the context:
+
+```go
+func myHandler(ctx forge.Context) error {
+    vr := middleware.ResultFromContext(ctx)
+    if vr == nil {
+        return fmt.Errorf("no validation result")
+    }
+
+    fmt.Println("Key ID:", vr.Key.ID)
+    fmt.Println("Tenant:", vr.Key.TenantID)
+    fmt.Println("Scopes:", vr.Scopes)
+    return nil
+}
+```
+
+## Full example
+
+```go
+import (
+    "github.com/xraph/forge"
+    "github.com/xraph/keysmith"
+    "github.com/xraph/keysmith/middleware"
+)
+
+// Public routes — no auth
+app.GET("/health", healthHandler)
+
+// Protected routes — require valid API key
+app.Group("/api/v1", middleware.APIKeyAuth(eng), func(g *forge.Group) {
+    // Requires read:users scope
+    g.GET("/users", middleware.RequireScopes("read:users"), listUsersHandler)
+
+    // Requires write:users scope
+    g.POST("/users", middleware.RequireScopes("write:users"), createUserHandler)
+})
+```

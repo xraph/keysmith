@@ -1,0 +1,45 @@
+---
+title: Memory Store
+description: In-memory store for development and testing.
+---
+
+The memory store provides a full `store.Store` implementation backed by Go maps and `sync.RWMutex`. It requires no external dependencies and is ideal for testing and development.
+
+## Setup
+
+```go
+import "github.com/xraph/keysmith/store/memory"
+
+store := memory.New()
+```
+
+## Features
+
+- Implements the complete `store.Store` composite interface (keys, policies, scopes, usage, rotation)
+- Thread-safe via `sync.RWMutex`
+- O(1) key lookup by hash via secondary index
+- Key-scope junction tracking for scope assignment
+- No external dependencies
+
+## Usage with the engine
+
+```go
+eng, err := keysmith.NewEngine(keysmith.WithStore(memory.New()))
+```
+
+## Limitations
+
+- Data is lost when the process exits
+- Not suitable for production use
+- No persistence, replication, or backup support
+- Single-process only (no multi-instance coordination)
+
+## When to use
+
+| Scenario | Recommended |
+| -------- | ----------- |
+| Unit tests | Yes |
+| Integration tests | Yes |
+| Local development | Yes |
+| CI pipelines | Yes |
+| Production | No -- use PostgreSQL |

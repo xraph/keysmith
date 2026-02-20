@@ -1,0 +1,55 @@
+---
+title: Observability
+description: Metrics counters for monitoring Keysmith operations.
+---
+
+The observability plugin tracks Keysmith lifecycle events as go-utils metric counters. It implements all 13 lifecycle hook interfaces, incrementing a dedicated counter for each event.
+
+## Setup
+
+```go
+import "github.com/xraph/keysmith/observability"
+
+// Default collector
+eng, _ := keysmith.NewEngine(
+    keysmith.WithStore(store),
+    keysmith.WithExtension(observability.NewMetricsExtension()),
+)
+
+// Custom metric factory
+factory := gu.NewMetricsCollector("myapp/keysmith")
+eng, _ := keysmith.NewEngine(
+    keysmith.WithStore(store),
+    keysmith.WithExtension(observability.NewMetricsExtensionWithFactory(factory)),
+)
+```
+
+## Counters
+
+| Counter | Incremented when |
+| ------- | ---------------- |
+| `keysmith.key.created` | Key successfully created |
+| `keysmith.key.create_failed` | Key creation fails |
+| `keysmith.key.validated` | Key passes validation |
+| `keysmith.key.validation_failed` | Key validation fails |
+| `keysmith.key.rotated` | Key is rotated |
+| `keysmith.key.revoked` | Key is permanently revoked |
+| `keysmith.key.suspended` | Key is temporarily suspended |
+| `keysmith.key.reactivated` | Suspended key is reactivated |
+| `keysmith.key.expired` | Key found expired during validation |
+| `keysmith.key.rate_limited` | Key exceeds rate limit |
+| `keysmith.policy.created` | Policy created |
+| `keysmith.policy.updated` | Policy updated |
+| `keysmith.policy.deleted` | Policy deleted |
+
+## go-utils integration
+
+The `MetricsExtension` uses the `gu.MetricFactory` and `gu.Counter` interfaces from `github.com/xraph/go-utils/metrics`. These integrate with your existing monitoring stack (Prometheus, Datadog, etc.) via the go-utils adapter pattern.
+
+```go
+import gu "github.com/xraph/go-utils/metrics"
+
+// Provide your own factory for custom metric backends
+factory := myCustomFactory{} // implements gu.MetricFactory
+ext := observability.NewMetricsExtensionWithFactory(factory)
+```

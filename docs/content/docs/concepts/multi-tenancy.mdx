@@ -1,0 +1,67 @@
+---
+title: Multi-Tenancy
+description: Context-based tenant isolation across all subsystems.
+---
+
+Keysmith is multi-tenant by design. Every operation is scoped to an app and tenant via `context.Context`. Cross-tenant data access is structurally impossible.
+
+## Setting tenant context
+
+### Standalone mode
+
+Use `keysmith.WithTenant` to inject app ID and tenant ID into the context.
+
+```go
+ctx := keysmith.WithTenant(ctx, "my-app", "tenant-1")
+```
+
+### Forge mode
+
+When running as a Forge extension, Keysmith automatically extracts scope from `forge.Scope`:
+
+```go
+// Forge injects scope automatically via middleware.
+// AppID comes from forge.ScopeOrganization
+// TenantID comes from forge.ScopeOrganization
+```
+
+## How isolation works
+
+| Layer | Mechanism |
+| ----- | --------- |
+| **Context** | `WithTenant` injects app ID and tenant ID into `context.Context` |
+| **Engine** | Every operation reads scope from context before querying |
+| **Store** | All queries filter by app ID and tenant ID |
+| **Validation** | Key validation verifies the key belongs to the requesting tenant |
+| **Plugin hooks** | Lifecycle events carry tenant context for audit and metrics |
+
+## Reading scope from context
+
+```go
+appID := keysmith.AppIDFromContext(ctx)
+tenantID := keysmith.TenantIDFromContext(ctx)
+```
+
+## Store-level isolation
+
+Every store method receives the app ID and tenant ID from context. Queries are always scoped:
+
+```sql
+-- Example: listing keys for a tenant
+SELECT * FROM keysmith_keys
+WHERE app_id = $1 AND tenant_id = $2
+ORDER BY created_at DESC
+```
+
+A key created by tenant A is never returned when tenant B queries.
+
+## Key validation across tenants
+
+When a raw API key is validated, the engine:
+
+1. Hashes the raw key with SHA-256
+2. Looks up the hash in the store (global lookup, not tenant-scoped)
+3. Verifies the found key belongs to the requesting tenant
+4. Returns `ErrKeyNotFound` if the key belongs to a different tenant
+
+This design allows keys to be globally unique while maintaining strict tenant isolation.

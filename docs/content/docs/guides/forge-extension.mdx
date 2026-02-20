@@ -1,0 +1,101 @@
+---
+title: Forge Integration
+description: Using Keysmith with the Forge framework.
+---
+
+Keysmith ships with a Forge extension adapter that handles DI registration, REST API route mounting, and database migration on startup.
+
+## Mounting the extension
+
+```go
+import (
+    "github.com/xraph/forge"
+    "github.com/xraph/keysmith"
+    "github.com/xraph/keysmith/extension"
+    "github.com/xraph/keysmith/store/postgres"
+    audithook "github.com/xraph/keysmith/audit_hook"
+)
+
+app := forge.New(
+    forge.WithExtension(
+        extension.New(
+            extension.WithEngineOptions(
+                keysmith.WithStore(pgStore),
+            ),
+            extension.WithHookExtension(audithook.New(recorder)),
+        ),
+    ),
+)
+```
+
+## What the extension does
+
+### On registration
+
+1. Registers `keysmith.Engine` in the Forge DI container via `vessel.Provide`
+2. Registers the API route handler
+
+### On start
+
+1. Runs database migrations if a PostgreSQL store is configured
+2. Starts any background processes (e.g., expired key cleanup)
+
+### On stop
+
+1. Fires the `Shutdown` plugin hook
+2. Closes the store connection
+
+## REST API routes
+
+When mounted, the extension exposes the full Keysmith REST API:
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `POST` | `/v1/keys` | Create API key |
+| `GET` | `/v1/keys` | List API keys |
+| `GET` | `/v1/keys/:keyId` | Get API key |
+| `DELETE` | `/v1/keys/:keyId` | Delete API key |
+| `POST` | `/v1/keys/:keyId/rotate` | Rotate API key |
+| `POST` | `/v1/keys/:keyId/revoke` | Revoke API key |
+| `POST` | `/v1/keys/:keyId/suspend` | Suspend API key |
+| `POST` | `/v1/keys/:keyId/reactivate` | Reactivate API key |
+| `POST` | `/v1/keys/validate` | Validate raw API key |
+| `POST` | `/v1/policies` | Create policy |
+| `GET` | `/v1/policies` | List policies |
+| `GET` | `/v1/policies/:policyId` | Get policy |
+| `PUT` | `/v1/policies/:policyId` | Update policy |
+| `DELETE` | `/v1/policies/:policyId` | Delete policy |
+| `POST` | `/v1/scopes` | Create scope |
+| `GET` | `/v1/scopes` | List scopes |
+| `DELETE` | `/v1/scopes/:scopeId` | Delete scope |
+| `POST` | `/v1/keys/:keyId/scopes` | Assign scopes to key |
+| `DELETE` | `/v1/keys/:keyId/scopes` | Remove scopes from key |
+| `GET` | `/v1/keys/:keyId/usage` | Get key usage |
+| `GET` | `/v1/keys/:keyId/usage/aggregate` | Get usage aggregation |
+| `GET` | `/v1/usage` | List tenant usage |
+| `GET` | `/v1/keys/:keyId/rotations` | List key rotations |
+
+## Automatic tenant scoping
+
+When running inside Forge, Keysmith automatically extracts the app ID and tenant ID from `forge.Scope`. No manual `WithTenant` call is needed.
+
+## DI integration
+
+Access the engine from the Forge DI container:
+
+```go
+// In a Forge handler
+func myHandler(ctx forge.Context) error {
+    eng := vessel.MustResolve[*keysmith.Engine](ctx.Vessel())
+    // use eng...
+}
+```
+
+## Extension options
+
+| Option | Description |
+| ------ | ----------- |
+| `WithEngineOptions(...keysmith.Option)` | Engine configuration options |
+| `WithHookExtension(plugin.Plugin)` | Register a lifecycle plugin |
+| `WithConfig(Config)` | Override default extension configuration |
+| `WithLogger(*slog.Logger)` | Set the logger |
