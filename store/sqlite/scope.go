@@ -1,80 +1,84 @@
-package postgres
+package sqlite
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/xraph/grove/driver"
-	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/sqlitedriver"
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/scope"
 )
 
 type scopeStore struct {
-	db *pgdriver.PgDB
+	sdb *sqlitedriver.SqliteDB
 }
 
 func (s *scopeStore) Create(ctx context.Context, sc *scope.Scope) error {
 	m := scopeToModel(sc)
-	_, err := s.db.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: create scope: %w", err)
+		return fmt.Errorf("keysmith/sqlite: create scope: %w", err)
 	}
 	return nil
 }
 
 func (s *scopeStore) Get(ctx context.Context, scopeID id.ScopeID) (*scope.Scope, error) {
 	m := new(scopeModel)
-	err := s.db.NewSelect(m).Where("id = ?", scopeID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", scopeID.String()).Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, errNotFound("scope")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: get scope: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: get scope: %w", err)
 	}
 	return scopeFromModel(m)
 }
 
 func (s *scopeStore) GetByName(ctx context.Context, tenantID, name string) (*scope.Scope, error) {
 	m := new(scopeModel)
-	err := s.db.NewSelect(m).
+	err := s.sdb.NewSelect(m).
 		Where("tenant_id = ?", tenantID).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, errNotFound("scope")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: get scope by name: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: get scope by name: %w", err)
 	}
 	return scopeFromModel(m)
 }
 
 func (s *scopeStore) Update(ctx context.Context, sc *scope.Scope) error {
 	m := scopeToModel(sc)
-	res, err := s.db.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: update scope: %w", err)
+		return fmt.Errorf("keysmith/sqlite: update scope: %w", err)
 	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("keysmith/sqlite: update scope rows: %w", err)
+	}
+	if rows == 0 {
 		return errNotFound("scope")
 	}
 	return nil
 }
 
 func (s *scopeStore) Delete(ctx context.Context, scopeID id.ScopeID) error {
-	res, err := s.db.NewDelete((*scopeModel)(nil)).
+	res, err := s.sdb.NewDelete((*scopeModel)(nil)).
 		Where("id = ?", scopeID.String()).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: delete scope: %w", err)
+		return fmt.Errorf("keysmith/sqlite: delete scope: %w", err)
 	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("keysmith/sqlite: delete scope rows: %w", err)
+	}
+	if rows == 0 {
 		return errNotFound("scope")
 	}
 	return nil
@@ -82,7 +86,7 @@ func (s *scopeStore) Delete(ctx context.Context, scopeID id.ScopeID) error {
 
 func (s *scopeStore) List(ctx context.Context, filter *scope.ListFilter) ([]*scope.Scope, error) {
 	var models []scopeModel
-	q := s.db.NewSelect(&models).OrderExpr("name ASC")
+	q := s.sdb.NewSelect(&models).OrderExpr("name ASC")
 
 	if filter != nil {
 		if filter.TenantID != "" {
@@ -100,14 +104,14 @@ func (s *scopeStore) List(ctx context.Context, filter *scope.ListFilter) ([]*sco
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: list scopes: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: list scopes: %w", err)
 	}
 
 	result := make([]*scope.Scope, 0, len(models))
 	for i := range models {
 		sc, err := scopeFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert scope: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: convert scope: %w", err)
 		}
 		result = append(result, sc)
 	}
@@ -116,20 +120,20 @@ func (s *scopeStore) List(ctx context.Context, filter *scope.ListFilter) ([]*sco
 
 func (s *scopeStore) ListByKey(ctx context.Context, keyID id.KeyID) ([]*scope.Scope, error) {
 	var models []scopeModel
-	err := s.db.NewSelect(&models).
+	err := s.sdb.NewSelect(&models).
 		Join("INNER JOIN", "keysmith_key_scopes AS ks", "ks.scope_id = keysmith_scopes.id").
 		Where("ks.key_id = ?", keyID.String()).
 		OrderExpr("keysmith_scopes.name ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: list scopes by key: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: list scopes by key: %w", err)
 	}
 
 	result := make([]*scope.Scope, 0, len(models))
 	for i := range models {
 		sc, err := scopeFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert scope: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: convert scope: %w", err)
 		}
 		result = append(result, sc)
 	}
@@ -141,31 +145,30 @@ func (s *scopeStore) AssignToKey(ctx context.Context, keyID id.KeyID, scopeNames
 		return nil
 	}
 
-	tx, err := s.db.BeginTxQuery(ctx, &driver.TxOptions{})
+	tx, err := s.sdb.BeginTxQuery(ctx, &driver.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: begin tx: %w", err)
+		return fmt.Errorf("keysmith/sqlite: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	kid := keyID.String()
 	for _, name := range scopeNames {
-		// Look up scope ID by name within the same tenant as the key.
 		var scopeID string
 		err := tx.NewRaw(`
 			SELECT s.id FROM keysmith_scopes s
 			INNER JOIN keysmith_keys k ON k.tenant_id = s.tenant_id
-			WHERE k.id = $1 AND s.name = $2`, kid, name).Scan(ctx, &scopeID)
+			WHERE k.id = ? AND s.name = ?`, kid, name).Scan(ctx, &scopeID)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			if isNoRows(err) {
 				return errNotFound("scope")
 			}
-			return fmt.Errorf("keysmith/postgres: lookup scope %q: %w", name, err)
+			return fmt.Errorf("keysmith/sqlite: lookup scope %q: %w", name, err)
 		}
 
 		m := &keyScopeModel{KeyID: kid, ScopeID: scopeID}
 		_, err = tx.NewInsert(m).OnConflict("DO NOTHING").Exec(ctx)
 		if err != nil {
-			return fmt.Errorf("keysmith/postgres: assign scope: %w", err)
+			return fmt.Errorf("keysmith/sqlite: assign scope: %w", err)
 		}
 	}
 
@@ -177,9 +180,9 @@ func (s *scopeStore) RemoveFromKey(ctx context.Context, keyID id.KeyID, scopeNam
 		return nil
 	}
 
-	tx, err := s.db.BeginTxQuery(ctx, &driver.TxOptions{})
+	tx, err := s.sdb.BeginTxQuery(ctx, &driver.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: begin tx: %w", err)
+		return fmt.Errorf("keysmith/sqlite: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -187,13 +190,13 @@ func (s *scopeStore) RemoveFromKey(ctx context.Context, keyID id.KeyID, scopeNam
 	for _, name := range scopeNames {
 		_, err = tx.NewRaw(`
 			DELETE FROM keysmith_key_scopes
-			WHERE key_id = $1 AND scope_id = (
+			WHERE key_id = ? AND scope_id = (
 				SELECT s.id FROM keysmith_scopes s
 				INNER JOIN keysmith_keys k ON k.tenant_id = s.tenant_id
-				WHERE k.id = $1 AND s.name = $2
-			)`, kid, name).Exec(ctx)
+				WHERE k.id = ? AND s.name = ?
+			)`, kid, kid, name).Exec(ctx)
 		if err != nil {
-			return fmt.Errorf("keysmith/postgres: remove scope: %w", err)
+			return fmt.Errorf("keysmith/sqlite: remove scope: %w", err)
 		}
 	}
 

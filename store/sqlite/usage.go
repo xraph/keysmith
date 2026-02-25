@@ -1,4 +1,4 @@
-package postgres
+package sqlite
 
 import (
 	"context"
@@ -6,21 +6,21 @@ import (
 	"time"
 
 	"github.com/xraph/grove/driver"
-	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/sqlitedriver"
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/usage"
 )
 
 type usageStore struct {
-	db *pgdriver.PgDB
+	sdb *sqlitedriver.SqliteDB
 }
 
 func (s *usageStore) Record(ctx context.Context, rec *usage.Record) error {
 	m := usageToModel(rec)
-	_, err := s.db.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: record usage: %w", err)
+		return fmt.Errorf("keysmith/sqlite: record usage: %w", err)
 	}
 	return nil
 }
@@ -30,9 +30,9 @@ func (s *usageStore) RecordBatch(ctx context.Context, recs []*usage.Record) erro
 		return nil
 	}
 
-	tx, err := s.db.BeginTxQuery(ctx, &driver.TxOptions{})
+	tx, err := s.sdb.BeginTxQuery(ctx, &driver.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: begin tx: %w", err)
+		return fmt.Errorf("keysmith/sqlite: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -40,7 +40,7 @@ func (s *usageStore) RecordBatch(ctx context.Context, recs []*usage.Record) erro
 		m := usageToModel(rec)
 		_, err := tx.NewInsert(m).Exec(ctx)
 		if err != nil {
-			return fmt.Errorf("keysmith/postgres: record batch usage: %w", err)
+			return fmt.Errorf("keysmith/sqlite: record batch usage: %w", err)
 		}
 	}
 
@@ -49,7 +49,7 @@ func (s *usageStore) RecordBatch(ctx context.Context, recs []*usage.Record) erro
 
 func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*usage.Record, error) {
 	var models []usageModel
-	q := s.db.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
 
 	if filter != nil {
 		if filter.KeyID != nil {
@@ -73,14 +73,14 @@ func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*u
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: query usage: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: query usage: %w", err)
 	}
 
 	result := make([]*usage.Record, 0, len(models))
 	for i := range models {
 		rec, err := usageFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert usage: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: convert usage: %w", err)
 		}
 		result = append(result, rec)
 	}
@@ -89,7 +89,7 @@ func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*u
 
 func (s *usageStore) Aggregate(ctx context.Context, filter *usage.QueryFilter) ([]*usage.Aggregation, error) {
 	var models []usageAggModel
-	q := s.db.NewSelect(&models).OrderExpr("period_start DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("period_start DESC")
 
 	if filter != nil {
 		if filter.KeyID != nil {
@@ -116,14 +116,14 @@ func (s *usageStore) Aggregate(ctx context.Context, filter *usage.QueryFilter) (
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: aggregate usage: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: aggregate usage: %w", err)
 	}
 
 	result := make([]*usage.Aggregation, 0, len(models))
 	for i := range models {
 		agg, err := aggFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert aggregation: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: convert aggregation: %w", err)
 		}
 		result = append(result, agg)
 	}
@@ -131,7 +131,7 @@ func (s *usageStore) Aggregate(ctx context.Context, filter *usage.QueryFilter) (
 }
 
 func (s *usageStore) Count(ctx context.Context, filter *usage.QueryFilter) (int64, error) {
-	q := s.db.NewSelect((*usageModel)(nil))
+	q := s.sdb.NewSelect((*usageModel)(nil))
 
 	if filter != nil {
 		if filter.KeyID != nil {
@@ -150,34 +150,37 @@ func (s *usageStore) Count(ctx context.Context, filter *usage.QueryFilter) (int6
 
 	count, err := q.Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("keysmith/postgres: count usage: %w", err)
+		return 0, fmt.Errorf("keysmith/sqlite: count usage: %w", err)
 	}
 	return count, nil
 }
 
 func (s *usageStore) Purge(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.NewDelete((*usageModel)(nil)).
+	res, err := s.sdb.NewDelete((*usageModel)(nil)).
 		Where("created_at < ?", before).
 		Exec(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("keysmith/postgres: purge usage: %w", err)
+		return 0, fmt.Errorf("keysmith/sqlite: purge usage: %w", err)
 	}
-	affected, _ := res.RowsAffected()
-	return affected, nil
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("keysmith/sqlite: purge usage rows: %w", err)
+	}
+	return rows, nil
 }
 
 func (s *usageStore) DailyCount(ctx context.Context, keyID id.KeyID, date time.Time) (int64, error) {
 	dayStart := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
 	dayEnd := dayStart.Add(24 * time.Hour)
 
-	q := s.db.NewSelect((*usageModel)(nil)).
+	q := s.sdb.NewSelect((*usageModel)(nil)).
 		Where("key_id = ?", keyID.String()).
 		Where("created_at >= ?", dayStart).
 		Where("created_at < ?", dayEnd)
 
 	count, err := q.Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("keysmith/postgres: daily count: %w", err)
+		return 0, fmt.Errorf("keysmith/sqlite: daily count: %w", err)
 	}
 	return count, nil
 }
@@ -186,14 +189,14 @@ func (s *usageStore) MonthlyCount(ctx context.Context, keyID id.KeyID, month tim
 	monthStart := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 	monthEnd := monthStart.AddDate(0, 1, 0)
 
-	q := s.db.NewSelect((*usageModel)(nil)).
+	q := s.sdb.NewSelect((*usageModel)(nil)).
 		Where("key_id = ?", keyID.String()).
 		Where("created_at >= ?", monthStart).
 		Where("created_at < ?", monthEnd)
 
 	count, err := q.Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("keysmith/postgres: monthly count: %w", err)
+		return 0, fmt.Errorf("keysmith/sqlite: monthly count: %w", err)
 	}
 	return count, nil
 }

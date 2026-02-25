@@ -1,0 +1,86 @@
+---
+title: MongoDB Store
+description: MongoDB store for document-oriented and horizontally-scalable deployments.
+---
+
+The `store/mongo` package implements Keysmith's `store.Store` interface using the grove ORM with the MongoDB driver. It stores keys, policies, scopes, usage records, and rotations as documents, making it a natural fit for deployments that already run MongoDB.
+
+## Usage
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/mongodriver"
+    "github.com/xraph/keysmith/store/mongo"
+)
+
+db, err := grove.Open(mongodriver.Open("mongodb://localhost:27017", "keysmith"))
+if err != nil {
+    log.Fatal(err)
+}
+
+s := mongo.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+
+eng, err := keysmith.NewEngine(keysmith.WithStore(s))
+```
+
+## Migrations
+
+The store creates indexes on all Keysmith collections. Run them on startup:
+
+```go
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+This creates indexes across seven collections:
+
+| Collection | Description |
+| ---------- | ----------- |
+| `keysmith_keys` | API keys with hash, state, and metadata |
+| `keysmith_policies` | Policy definitions |
+| `keysmith_scopes` | Scope definitions |
+| `keysmith_key_scopes` | Key-scope junction table |
+| `keysmith_usage` | Per-request usage records |
+| `keysmith_usage_agg` | Aggregated usage (daily/monthly) |
+| `keysmith_rotations` | Rotation history records |
+
+Migrations are idempotent and safe to run on every startup.
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | grove ORM + mongodriver |
+| Migrations | Index creation on collections |
+| Transactions | MongoDB sessions (replica-set required for multi-doc txns) |
+| Concurrency | MongoDB native concurrency model |
+| Subsystems | keys, policies, scopes, usages, rotations |
+
+## Health checks
+
+```go
+if err := s.Ping(ctx); err != nil {
+    log.Fatal("database unreachable:", err)
+}
+```
+
+## Usage with the engine
+
+```go
+eng, err := keysmith.NewEngine(keysmith.WithStore(s))
+```
+
+## When to use
+
+| Scenario | Recommended |
+| -------- | ----------- |
+| Document-oriented workloads | Yes |
+| Horizontally-scaled environments | Yes |
+| Teams already running MongoDB | Yes |
+| Single-node development | Possible -- SQLite may be simpler |
+| Maximum SQL compatibility | No -- use PostgreSQL |

@@ -1,79 +1,80 @@
-package postgres
+package mongo
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
-	"github.com/xraph/grove/drivers/pgdriver"
+	"go.mongodb.org/mongo-driver/v2/bson"
+
+	"github.com/xraph/grove/drivers/mongodriver"
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/policy"
 )
 
 type policyStore struct {
-	db *pgdriver.PgDB
+	mdb *mongodriver.MongoDB
 }
 
 func (s *policyStore) Create(ctx context.Context, pol *policy.Policy) error {
 	m := policyToModel(pol)
-	_, err := s.db.NewInsert(m).Exec(ctx)
+	_, err := s.mdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: create policy: %w", err)
+		return fmt.Errorf("keysmith/mongo: create policy: %w", err)
 	}
 	return nil
 }
 
 func (s *policyStore) Get(ctx context.Context, polID id.PolicyID) (*policy.Policy, error) {
-	m := new(policyModel)
-	err := s.db.NewSelect(m).Where("id = ?", polID.String()).Scan(ctx)
+	var m policyModel
+	err := s.mdb.NewFind(&m).
+		Filter(bson.M{"_id": polID.String()}).
+		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoDocuments(err) {
 			return nil, errNotFound("policy")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: get policy: %w", err)
+		return nil, fmt.Errorf("keysmith/mongo: get policy: %w", err)
 	}
-	return policyFromModel(m)
+	return policyFromModel(&m)
 }
 
 func (s *policyStore) GetByName(ctx context.Context, tenantID, name string) (*policy.Policy, error) {
-	m := new(policyModel)
-	err := s.db.NewSelect(m).
-		Where("tenant_id = ?", tenantID).
-		Where("name = ?", name).
+	var m policyModel
+	err := s.mdb.NewFind(&m).
+		Filter(bson.M{"tenant_id": tenantID, "name": name}).
 		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoDocuments(err) {
 			return nil, errNotFound("policy")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: get policy by name: %w", err)
+		return nil, fmt.Errorf("keysmith/mongo: get policy by name: %w", err)
 	}
-	return policyFromModel(m)
+	return policyFromModel(&m)
 }
 
 func (s *policyStore) Update(ctx context.Context, pol *policy.Policy) error {
 	m := policyToModel(pol)
-	res, err := s.db.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).
+		Filter(bson.M{"_id": m.ID}).
+		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: update policy: %w", err)
+		return fmt.Errorf("keysmith/mongo: update policy: %w", err)
 	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
+	if res.MatchedCount() == 0 {
 		return errNotFound("policy")
 	}
 	return nil
 }
 
 func (s *policyStore) Delete(ctx context.Context, polID id.PolicyID) error {
-	res, err := s.db.NewDelete((*policyModel)(nil)).
-		Where("id = ?", polID.String()).
+	res, err := s.mdb.NewDelete((*policyModel)(nil)).
+		Filter(bson.M{"_id": polID.String()}).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: delete policy: %w", err)
+		return fmt.Errorf("keysmith/mongo: delete policy: %w", err)
 	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
+	if res.DeletedCount() == 0 {
 		return errNotFound("policy")
 	}
 	return nil
@@ -81,29 +82,36 @@ func (s *policyStore) Delete(ctx context.Context, polID id.PolicyID) error {
 
 func (s *policyStore) List(ctx context.Context, filter *policy.ListFilter) ([]*policy.Policy, error) {
 	var models []policyModel
-	q := s.db.NewSelect(&models).OrderExpr("created_at DESC")
 
+	f := bson.M{}
 	if filter != nil {
 		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
+			f["tenant_id"] = filter.TenantID
 		}
+	}
+
+	q := s.mdb.NewFind(&models).
+		Filter(f).
+		Sort(bson.D{{Key: "created_at", Value: -1}})
+
+	if filter != nil {
 		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
+			q = q.Limit(int64(filter.Limit))
 		}
 		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
+			q = q.Skip(int64(filter.Offset))
 		}
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: list policies: %w", err)
+		return nil, fmt.Errorf("keysmith/mongo: list policies: %w", err)
 	}
 
 	result := make([]*policy.Policy, 0, len(models))
 	for i := range models {
 		pol, err := policyFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert policy: %w", err)
+			return nil, fmt.Errorf("keysmith/mongo: convert policy: %w", err)
 		}
 		result = append(result, pol)
 	}
@@ -111,17 +119,18 @@ func (s *policyStore) List(ctx context.Context, filter *policy.ListFilter) ([]*p
 }
 
 func (s *policyStore) Count(ctx context.Context, filter *policy.ListFilter) (int64, error) {
-	q := s.db.NewSelect((*policyModel)(nil))
-
+	f := bson.M{}
 	if filter != nil {
 		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
+			f["tenant_id"] = filter.TenantID
 		}
 	}
 
-	count, err := q.Count(ctx)
+	count, err := s.mdb.NewFind((*policyModel)(nil)).
+		Filter(f).
+		Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("keysmith/postgres: count policies: %w", err)
+		return 0, fmt.Errorf("keysmith/mongo: count policies: %w", err)
 	}
 	return count, nil
 }

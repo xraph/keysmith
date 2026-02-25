@@ -1,79 +1,83 @@
-package postgres
+package sqlite
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
-	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/sqlitedriver"
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/policy"
 )
 
 type policyStore struct {
-	db *pgdriver.PgDB
+	sdb *sqlitedriver.SqliteDB
 }
 
 func (s *policyStore) Create(ctx context.Context, pol *policy.Policy) error {
 	m := policyToModel(pol)
-	_, err := s.db.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: create policy: %w", err)
+		return fmt.Errorf("keysmith/sqlite: create policy: %w", err)
 	}
 	return nil
 }
 
 func (s *policyStore) Get(ctx context.Context, polID id.PolicyID) (*policy.Policy, error) {
 	m := new(policyModel)
-	err := s.db.NewSelect(m).Where("id = ?", polID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", polID.String()).Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, errNotFound("policy")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: get policy: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: get policy: %w", err)
 	}
 	return policyFromModel(m)
 }
 
 func (s *policyStore) GetByName(ctx context.Context, tenantID, name string) (*policy.Policy, error) {
 	m := new(policyModel)
-	err := s.db.NewSelect(m).
+	err := s.sdb.NewSelect(m).
 		Where("tenant_id = ?", tenantID).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, errNotFound("policy")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: get policy by name: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: get policy by name: %w", err)
 	}
 	return policyFromModel(m)
 }
 
 func (s *policyStore) Update(ctx context.Context, pol *policy.Policy) error {
 	m := policyToModel(pol)
-	res, err := s.db.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: update policy: %w", err)
+		return fmt.Errorf("keysmith/sqlite: update policy: %w", err)
 	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("keysmith/sqlite: update policy rows: %w", err)
+	}
+	if rows == 0 {
 		return errNotFound("policy")
 	}
 	return nil
 }
 
 func (s *policyStore) Delete(ctx context.Context, polID id.PolicyID) error {
-	res, err := s.db.NewDelete((*policyModel)(nil)).
+	res, err := s.sdb.NewDelete((*policyModel)(nil)).
 		Where("id = ?", polID.String()).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: delete policy: %w", err)
+		return fmt.Errorf("keysmith/sqlite: delete policy: %w", err)
 	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("keysmith/sqlite: delete policy rows: %w", err)
+	}
+	if rows == 0 {
 		return errNotFound("policy")
 	}
 	return nil
@@ -81,7 +85,7 @@ func (s *policyStore) Delete(ctx context.Context, polID id.PolicyID) error {
 
 func (s *policyStore) List(ctx context.Context, filter *policy.ListFilter) ([]*policy.Policy, error) {
 	var models []policyModel
-	q := s.db.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
 
 	if filter != nil {
 		if filter.TenantID != "" {
@@ -96,14 +100,14 @@ func (s *policyStore) List(ctx context.Context, filter *policy.ListFilter) ([]*p
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: list policies: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: list policies: %w", err)
 	}
 
 	result := make([]*policy.Policy, 0, len(models))
 	for i := range models {
 		pol, err := policyFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert policy: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: convert policy: %w", err)
 		}
 		result = append(result, pol)
 	}
@@ -111,7 +115,7 @@ func (s *policyStore) List(ctx context.Context, filter *policy.ListFilter) ([]*p
 }
 
 func (s *policyStore) Count(ctx context.Context, filter *policy.ListFilter) (int64, error) {
-	q := s.db.NewSelect((*policyModel)(nil))
+	q := s.sdb.NewSelect((*policyModel)(nil))
 
 	if filter != nil {
 		if filter.TenantID != "" {
@@ -121,7 +125,7 @@ func (s *policyStore) Count(ctx context.Context, filter *policy.ListFilter) (int
 
 	count, err := q.Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("keysmith/postgres: count policies: %w", err)
+		return 0, fmt.Errorf("keysmith/sqlite: count policies: %w", err)
 	}
 	return count, nil
 }

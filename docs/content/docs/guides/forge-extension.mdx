@@ -91,6 +91,40 @@ func myHandler(ctx forge.Context) error {
 }
 ```
 
+## Grove database integration
+
+When your Forge app uses the [Grove extension](https://github.com/xraph/grove) to manage database connections, Keysmith can automatically resolve a `grove.DB` from the DI container and construct the correct store backend based on the driver type.
+
+### Using the default grove database
+
+If the Grove extension registers a single database (or a default in multi-DB mode), use `WithGroveDatabase` with an empty name:
+
+```go
+ext := extension.New(
+    extension.WithGroveDatabase(""),
+)
+```
+
+### Using a named grove database
+
+In multi-database setups, reference a specific database by name:
+
+```go
+ext := extension.New(
+    extension.WithGroveDatabase("keysmith"),
+)
+```
+
+This resolves the grove.DB named `"keysmith"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
+
+### Store resolution order
+
+The extension resolves its store in this order:
+
+1. **Explicit store** -- if `WithEngineOptions(keysmith.WithStore(s))` was called, it is used directly and grove is ignored.
+2. **Grove database** -- if `WithGroveDatabase(name)` was called, the named or default `grove.DB` is resolved from DI.
+3. **In-memory fallback** -- if neither is configured, an in-memory store is used.
+
 ## Extension options
 
 | Option | Description |
@@ -99,3 +133,4 @@ func myHandler(ctx forge.Context) error {
 | `WithHookExtension(plugin.Plugin)` | Register a lifecycle plugin |
 | `WithConfig(Config)` | Override default extension configuration |
 | `WithLogger(*slog.Logger)` | Set the logger |
+| `WithGroveDatabase(name)` | Resolves a grove.DB by name from the DI container to auto-construct the store |

@@ -1,46 +1,44 @@
-package postgres
+package sqlite
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/sqlitedriver"
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/rotation"
 )
 
 type rotationStore struct {
-	db *pgdriver.PgDB
+	sdb *sqlitedriver.SqliteDB
 }
 
 func (s *rotationStore) Create(ctx context.Context, rec *rotation.Record) error {
 	m := rotationToModel(rec)
-	_, err := s.db.NewInsert(m).Exec(ctx)
+	_, err := s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("keysmith/postgres: create rotation: %w", err)
+		return fmt.Errorf("keysmith/sqlite: create rotation: %w", err)
 	}
 	return nil
 }
 
 func (s *rotationStore) Get(ctx context.Context, rotID id.RotationID) (*rotation.Record, error) {
 	m := new(rotationModel)
-	err := s.db.NewSelect(m).Where("id = ?", rotID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", rotID.String()).Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, errNotFound("rotation")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: get rotation: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: get rotation: %w", err)
 	}
 	return rotationFromModel(m)
 }
 
 func (s *rotationStore) List(ctx context.Context, filter *rotation.ListFilter) ([]*rotation.Record, error) {
 	var models []rotationModel
-	q := s.db.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
 
 	if filter != nil {
 		if filter.KeyID != nil {
@@ -61,14 +59,14 @@ func (s *rotationStore) List(ctx context.Context, filter *rotation.ListFilter) (
 	}
 
 	if err := q.Scan(ctx); err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: list rotations: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: list rotations: %w", err)
 	}
 
 	result := make([]*rotation.Record, 0, len(models))
 	for i := range models {
 		rec, err := rotationFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert rotation: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: convert rotation: %w", err)
 		}
 		result = append(result, rec)
 	}
@@ -77,19 +75,19 @@ func (s *rotationStore) List(ctx context.Context, filter *rotation.ListFilter) (
 
 func (s *rotationStore) ListPendingGrace(ctx context.Context, now time.Time) ([]*rotation.Record, error) {
 	var models []rotationModel
-	err := s.db.NewSelect(&models).
+	err := s.sdb.NewSelect(&models).
 		Where("grace_ends > ?", now).
 		OrderExpr("grace_ends ASC").
 		Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("keysmith/postgres: list pending grace: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: list pending grace: %w", err)
 	}
 
 	result := make([]*rotation.Record, 0, len(models))
 	for i := range models {
 		rec, err := rotationFromModel(&models[i])
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/postgres: convert rotation: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: convert rotation: %w", err)
 		}
 		result = append(result, rec)
 	}
@@ -98,16 +96,16 @@ func (s *rotationStore) ListPendingGrace(ctx context.Context, now time.Time) ([]
 
 func (s *rotationStore) LatestForKey(ctx context.Context, keyID id.KeyID) (*rotation.Record, error) {
 	m := new(rotationModel)
-	err := s.db.NewSelect(m).
+	err := s.sdb.NewSelect(m).
 		Where("key_id = ?", keyID.String()).
 		OrderExpr("created_at DESC").
 		Limit(1).
 		Scan(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if isNoRows(err) {
 			return nil, errNotFound("rotation")
 		}
-		return nil, fmt.Errorf("keysmith/postgres: latest for key: %w", err)
+		return nil, fmt.Errorf("keysmith/sqlite: latest for key: %w", err)
 	}
 	return rotationFromModel(m)
 }

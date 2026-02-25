@@ -1,0 +1,93 @@
+---
+title: SQLite Store
+description: Lightweight SQLite store for development, testing, and single-node deployments.
+---
+
+The `store/sqlite` package implements Keysmith's `store.Store` interface using the grove ORM with the SQLite driver. It requires no external database process, making it ideal for development, integration tests, and single-node deployments.
+
+## Usage
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+    "github.com/xraph/keysmith/store/sqlite"
+)
+
+db, err := grove.Open(sqlitedriver.Open("keysmith.db"))
+if err != nil {
+    log.Fatal(err)
+}
+
+s := sqlite.New(db)
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+
+eng, err := keysmith.NewEngine(keysmith.WithStore(s))
+```
+
+Pass `":memory:"` for a fully in-process, zero-persistence store useful in tests:
+
+```go
+db, err := grove.Open(sqlitedriver.Open(":memory:"))
+```
+
+## Migrations
+
+The store uses the grove migration orchestrator with programmatic migrations. Run them on startup:
+
+```go
+if err := s.Migrate(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+This creates seven tables:
+
+| Table | Description |
+| ----- | ----------- |
+| `keysmith_keys` | API keys with hash, state, and metadata |
+| `keysmith_policies` | Policy definitions |
+| `keysmith_scopes` | Scope definitions |
+| `keysmith_key_scopes` | Key-scope junction table |
+| `keysmith_usage` | Per-request usage records |
+| `keysmith_usage_agg` | Aggregated usage (daily/monthly) |
+| `keysmith_rotations` | Rotation history records |
+
+Migrations are idempotent and safe to run on every startup.
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | grove ORM + sqlitedriver |
+| Migrations | grove orchestrator with programmatic migrations |
+| Transactions | SQLite-level transactions |
+| Concurrency | Multiple readers, single writer (WAL mode) |
+| Subsystems | keys, policies, scopes, usages, rotations |
+
+## Health checks
+
+```go
+if err := s.Ping(ctx); err != nil {
+    log.Fatal("database unreachable:", err)
+}
+```
+
+## Usage with the engine
+
+```go
+eng, err := keysmith.NewEngine(keysmith.WithStore(s))
+```
+
+## When to use
+
+| Scenario | Recommended |
+| -------- | ----------- |
+| Unit tests | Yes |
+| Integration tests | Yes |
+| Local development | Yes |
+| CI pipelines | Yes |
+| Single-node deployments | Yes |
+| Multi-node production | No -- use PostgreSQL or MongoDB |
