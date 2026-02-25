@@ -1,63 +1,67 @@
 ---
 title: Identity (TypeID)
-description: Type-safe, K-sortable entity identifiers.
+description: How Keysmith uses prefix-qualified, globally unique identifiers for every entity.
 ---
 
-Every entity in Keysmith gets a type-prefixed, K-sortable, UUIDv7-based identifier using the [TypeID](https://github.com/jetify-com/typeid) specification. IDs are validated at parse time to ensure the prefix matches the expected type.
+Every entity in Keysmith has a TypeID. TypeIDs are globally unique, sortable, URL-safe identifiers built on UUIDv7 with a human-readable prefix that tells you what kind of entity you're looking at.
 
-## Prefixes
+A TypeID looks like this:
 
-| Prefix | Entity | Example |
-| ------ | ------ | ------- |
-| `akey` | API Key | `akey_01h2xcejqtf2nbrexx3vqjhp41` |
-| `kpol` | Policy | `kpol_01h2xcejqtf2nbrexx3vqjhp41` |
-| `kusg` | Usage Record | `kusg_01h2xcejqtf2nbrexx3vqjhp41` |
-| `krot` | Rotation Record | `krot_01h455vb4pex5vsknk084sn02q` |
-| `kscp` | Scope | `kscp_01h455vb4pex5vsknk084sn02q` |
+```
+akey_01h455vb4pex5vsknk084sn02q
+```
 
-## Type aliases
+The `akey` prefix identifies this as an API key. The suffix is a base32-encoded UUIDv7 that encodes creation time, so IDs sort chronologically.
 
-Each entity has a dedicated type alias for readability. All aliases resolve to `typeid.TypeID`.
+## The `id` package
+
+The `id` package wraps the [TypeID Go library](https://github.com/jetify-com/typeid-go) (v2) with a single `ID` struct. All entity types share the same struct -- the prefix distinguishes them.
+
+### Creating IDs
 
 ```go
 import "github.com/xraph/keysmith/id"
 
-type KeyID      = typeid.TypeID
-type PolicyID   = typeid.TypeID
-type UsageID    = typeid.TypeID
-type RotationID = typeid.TypeID
-type ScopeID    = typeid.TypeID
-type AnyID      = typeid.TypeID
+keyID      := id.New(id.PrefixKey)       // akey_01h455vb...
+policyID   := id.New(id.PrefixPolicy)    // kpol_01h455vb...
+usageID    := id.New(id.PrefixUsage)     // kusg_01h455vb...
+rotationID := id.New(id.PrefixRotation)  // krot_01h455vb...
+scopeID    := id.New(id.PrefixScope)     // kscp_01h455vb...
 ```
 
-## Creating IDs
+Convenience constructors: `id.NewKeyID()`, `id.NewPolicyID()`, `id.NewUsageID()`, `id.NewRotationID()`, `id.NewScopeID()`.
+
+### Parsing IDs
 
 ```go
-kid := id.NewKeyID()      // akey_01h2xce...
-pid := id.NewPolicyID()   // kpol_01h2xce...
-uid := id.NewUsageID()    // kusg_01h2xce...
-rid := id.NewRotationID() // krot_01h2xce...
-sid := id.NewScopeID()    // kscp_01h2xce...
+parsed, err := id.Parse("akey_01h455vb4pex5vsknk084sn02q")
+parsed, err := id.ParseWithPrefix("akey_01h455vb...", id.PrefixKey)  // validates prefix
+parsed, err := id.ParseKeyID("akey_01h455vb...")                     // convenience
 ```
 
-## Parsing IDs
-
-Parse functions validate that the prefix matches the expected type.
+### Nil ID
 
 ```go
-kid, err := id.ParseKeyID("akey_01h2xcejqtf2nbrexx3vqjhp41")
-// err == nil
-
-_, err = id.ParseKeyID("kpol_01h2xcejqtf2nbrexx3vqjhp41")
-// err: id: expected prefix "akey", got "kpol"
+var empty id.ID
+empty.IsNil()  // true
+empty.String() // ""
+id.Nil.IsNil() // true
 ```
 
-Use `ParseAny` to accept any valid prefix:
+### Database storage
 
-```go
-anyID, err := id.ParseAny("akey_01h2xcejqtf2nbrexx3vqjhp41")
-```
+`id.ID` implements `Scanner` and `driver.Valuer`. Stores as a string, returns `NULL` for nil IDs.
 
-## Serialization
+### JSON serialization
 
-TypeIDs implement `MarshalText`, `UnmarshalText`, `MarshalJSON`, `UnmarshalJSON`, and the database `Value`/`Scan` interfaces. They serialize as their string representation in all formats.
+`id.ID` implements `TextMarshaler` and `TextUnmarshaler`. Nil IDs serialize as empty strings.
+
+## Prefix reference
+
+| Constant | Prefix | Entity |
+|----------|--------|--------|
+| `id.PrefixKey` | `akey` | API key |
+| `id.PrefixPolicy` | `kpol` | Policy |
+| `id.PrefixUsage` | `kusg` | Usage record |
+| `id.PrefixRotation` | `krot` | Rotation record |
+| `id.PrefixScope` | `kscp` | Scope |

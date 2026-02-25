@@ -1,126 +1,257 @@
-// Package id provides TypeID-based identity types for all Keysmith entities.
+// Package id defines TypeID-based identity types for all Keysmith entities.
 //
-// Every entity in Keysmith gets a type-prefixed, K-sortable, UUIDv7-based
-// identifier. IDs are validated at parse time to ensure the prefix matches
-// the expected type.
-//
-// Examples:
-//
-//	akey_01h2xcejqtf2nbrexx3vqjhp41
-//	kpol_01h2xcejqtf2nbrexx3vqjhp41
-//	kscp_01h455vb4pex5vsknk084sn02q
+// Every entity in Keysmith uses a single ID struct with a prefix that identifies
+// the entity type. IDs are K-sortable (UUIDv7-based), globally unique,
+// and URL-safe in the format "prefix_suffix".
 package id
 
 import (
+	"database/sql/driver"
 	"fmt"
 
 	"go.jetify.com/typeid/v2"
 )
 
-// ──────────────────────────────────────────────────
-// Prefix constants
-// ──────────────────────────────────────────────────
+// Prefix identifies the entity type encoded in a TypeID.
+type Prefix string
 
+// Prefix constants for all Keysmith entity types.
 const (
-	// PrefixKey is the TypeID prefix for API keys.
-	PrefixKey = "akey"
-
-	// PrefixPolicy is the TypeID prefix for key policies.
-	PrefixPolicy = "kpol"
-
-	// PrefixUsage is the TypeID prefix for usage records.
-	PrefixUsage = "kusg"
-
-	// PrefixRotation is the TypeID prefix for rotation records.
-	PrefixRotation = "krot"
-
-	// PrefixScope is the TypeID prefix for key scopes.
-	PrefixScope = "kscp"
+	PrefixKey      Prefix = "akey"
+	PrefixPolicy   Prefix = "kpol"
+	PrefixUsage    Prefix = "kusg"
+	PrefixRotation Prefix = "krot"
+	PrefixScope    Prefix = "kscp"
 )
 
+// ID is the primary identifier type for all Keysmith entities.
+// It wraps a TypeID providing a prefix-qualified, globally unique,
+// sortable, URL-safe identifier in the format "prefix_suffix".
+//
+//nolint:recvcheck // Value receivers for read-only methods, pointer receivers for UnmarshalText/Scan.
+type ID struct {
+	inner typeid.TypeID
+	valid bool
+}
+
+// Nil is the zero-value ID.
+var Nil ID
+
+// New generates a new globally unique ID with the given prefix.
+// It panics if prefix is not a valid TypeID prefix (programming error).
+func New(prefix Prefix) ID {
+	tid, err := typeid.Generate(string(prefix))
+	if err != nil {
+		panic(fmt.Sprintf("id: invalid prefix %q: %v", prefix, err))
+	}
+
+	return ID{inner: tid, valid: true}
+}
+
+// Parse parses a TypeID string (e.g., "akey_01h2xcejqtf2nbrexx3vqjhp41")
+// into an ID. Returns an error if the string is not valid.
+func Parse(s string) (ID, error) {
+	if s == "" {
+		return Nil, fmt.Errorf("id: parse %q: empty string", s)
+	}
+
+	tid, err := typeid.Parse(s)
+	if err != nil {
+		return Nil, fmt.Errorf("id: parse %q: %w", s, err)
+	}
+
+	return ID{inner: tid, valid: true}, nil
+}
+
+// ParseWithPrefix parses a TypeID string and validates that its prefix
+// matches the expected value.
+func ParseWithPrefix(s string, expected Prefix) (ID, error) {
+	parsed, err := Parse(s)
+	if err != nil {
+		return Nil, err
+	}
+
+	if parsed.Prefix() != expected {
+		return Nil, fmt.Errorf("id: expected prefix %q, got %q", expected, parsed.Prefix())
+	}
+
+	return parsed, nil
+}
+
+// MustParse is like Parse but panics on error. Use for hardcoded ID values.
+func MustParse(s string) ID {
+	parsed, err := Parse(s)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse %q: %v", s, err))
+	}
+
+	return parsed
+}
+
+// MustParseWithPrefix is like ParseWithPrefix but panics on error.
+func MustParseWithPrefix(s string, expected Prefix) ID {
+	parsed, err := ParseWithPrefix(s, expected)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse with prefix %q: %v", expected, err))
+	}
+
+	return parsed
+}
+
 // ──────────────────────────────────────────────────
-// Type aliases for readability
+// Type aliases for backward compatibility
 // ──────────────────────────────────────────────────
 
 // KeyID is a type-safe identifier for API keys (prefix: "akey").
-type KeyID = typeid.TypeID
+type KeyID = ID
 
 // PolicyID is a type-safe identifier for key policies (prefix: "kpol").
-type PolicyID = typeid.TypeID
+type PolicyID = ID
 
 // UsageID is a type-safe identifier for usage records (prefix: "kusg").
-type UsageID = typeid.TypeID
+type UsageID = ID
 
 // RotationID is a type-safe identifier for rotation records (prefix: "krot").
-type RotationID = typeid.TypeID
+type RotationID = ID
 
 // ScopeID is a type-safe identifier for key scopes (prefix: "kscp").
-type ScopeID = typeid.TypeID
+type ScopeID = ID
 
-// AnyID is a TypeID that accepts any valid prefix.
-type AnyID = typeid.TypeID
-
-// ──────────────────────────────────────────────────
-// Constructors
-// ──────────────────────────────────────────────────
-
-// NewKeyID returns a new random KeyID.
-func NewKeyID() KeyID { return must(typeid.Generate(PrefixKey)) }
-
-// NewPolicyID returns a new random PolicyID.
-func NewPolicyID() PolicyID { return must(typeid.Generate(PrefixPolicy)) }
-
-// NewUsageID returns a new random UsageID.
-func NewUsageID() UsageID { return must(typeid.Generate(PrefixUsage)) }
-
-// NewRotationID returns a new random RotationID.
-func NewRotationID() RotationID { return must(typeid.Generate(PrefixRotation)) }
-
-// NewScopeID returns a new random ScopeID.
-func NewScopeID() ScopeID { return must(typeid.Generate(PrefixScope)) }
+// AnyID is a type alias that accepts any valid prefix.
+type AnyID = ID
 
 // ──────────────────────────────────────────────────
-// Parsing (validates prefix at parse time)
+// Convenience constructors
 // ──────────────────────────────────────────────────
 
-// ParseKeyID parses a string into a KeyID. Returns an error if the
-// prefix is not "akey" or the suffix is invalid.
-func ParseKeyID(s string) (KeyID, error) { return parseWithPrefix(PrefixKey, s) }
+// NewKeyID generates a new unique API key ID.
+func NewKeyID() ID { return New(PrefixKey) }
 
-// ParsePolicyID parses a string into a PolicyID.
-func ParsePolicyID(s string) (PolicyID, error) { return parseWithPrefix(PrefixPolicy, s) }
+// NewPolicyID generates a new unique policy ID.
+func NewPolicyID() ID { return New(PrefixPolicy) }
 
-// ParseUsageID parses a string into a UsageID.
-func ParseUsageID(s string) (UsageID, error) { return parseWithPrefix(PrefixUsage, s) }
+// NewUsageID generates a new unique usage ID.
+func NewUsageID() ID { return New(PrefixUsage) }
 
-// ParseRotationID parses a string into a RotationID.
-func ParseRotationID(s string) (RotationID, error) { return parseWithPrefix(PrefixRotation, s) }
+// NewRotationID generates a new unique rotation ID.
+func NewRotationID() ID { return New(PrefixRotation) }
 
-// ParseScopeID parses a string into a ScopeID.
-func ParseScopeID(s string) (ScopeID, error) { return parseWithPrefix(PrefixScope, s) }
-
-// ParseAny parses a string into an AnyID, accepting any valid prefix.
-func ParseAny(s string) (AnyID, error) { return typeid.Parse(s) }
+// NewScopeID generates a new unique scope ID.
+func NewScopeID() ID { return New(PrefixScope) }
 
 // ──────────────────────────────────────────────────
-// Helpers
+// Convenience parsers
 // ──────────────────────────────────────────────────
 
-// parseWithPrefix parses a TypeID and validates that its prefix matches expected.
-func parseWithPrefix(expected, s string) (typeid.TypeID, error) {
-	tid, err := typeid.Parse(s)
-	if err != nil {
-		return tid, err
+// ParseKeyID parses a string and validates the "akey" prefix.
+func ParseKeyID(s string) (ID, error) { return ParseWithPrefix(s, PrefixKey) }
+
+// ParsePolicyID parses a string and validates the "kpol" prefix.
+func ParsePolicyID(s string) (ID, error) { return ParseWithPrefix(s, PrefixPolicy) }
+
+// ParseUsageID parses a string and validates the "kusg" prefix.
+func ParseUsageID(s string) (ID, error) { return ParseWithPrefix(s, PrefixUsage) }
+
+// ParseRotationID parses a string and validates the "krot" prefix.
+func ParseRotationID(s string) (ID, error) { return ParseWithPrefix(s, PrefixRotation) }
+
+// ParseScopeID parses a string and validates the "kscp" prefix.
+func ParseScopeID(s string) (ID, error) { return ParseWithPrefix(s, PrefixScope) }
+
+// ParseAny parses a string into an ID without type checking the prefix.
+func ParseAny(s string) (ID, error) { return Parse(s) }
+
+// ──────────────────────────────────────────────────
+// ID methods
+// ──────────────────────────────────────────────────
+
+// String returns the full TypeID string representation (prefix_suffix).
+// Returns an empty string for the Nil ID.
+func (i ID) String() string {
+	if !i.valid {
+		return ""
 	}
-	if tid.Prefix() != expected {
-		return tid, fmt.Errorf("id: expected prefix %q, got %q", expected, tid.Prefix())
-	}
-	return tid, nil
+
+	return i.inner.String()
 }
 
-func must[T any](v T, err error) T {
-	if err != nil {
-		panic(err)
+// Prefix returns the prefix component of this ID.
+func (i ID) Prefix() Prefix {
+	if !i.valid {
+		return ""
 	}
-	return v
+
+	return Prefix(i.inner.Prefix())
+}
+
+// IsNil reports whether this ID is the zero value.
+func (i ID) IsNil() bool {
+	return !i.valid
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (i ID) MarshalText() ([]byte, error) {
+	if !i.valid {
+		return []byte{}, nil
+	}
+
+	return []byte(i.inner.String()), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (i *ID) UnmarshalText(data []byte) error {
+	if len(data) == 0 {
+		*i = Nil
+
+		return nil
+	}
+
+	parsed, err := Parse(string(data))
+	if err != nil {
+		return err
+	}
+
+	*i = parsed
+
+	return nil
+}
+
+// Value implements driver.Valuer for database storage.
+// Returns nil for the Nil ID so that optional foreign key columns store NULL.
+func (i ID) Value() (driver.Value, error) {
+	if !i.valid {
+		return nil, nil //nolint:nilnil // nil is the canonical NULL for driver.Valuer
+	}
+
+	return i.inner.String(), nil
+}
+
+// Scan implements sql.Scanner for database retrieval.
+func (i *ID) Scan(src any) error {
+	if src == nil {
+		*i = Nil
+
+		return nil
+	}
+
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*i = Nil
+
+			return nil
+		}
+
+		return i.UnmarshalText([]byte(v))
+	case []byte:
+		if len(v) == 0 {
+			*i = Nil
+
+			return nil
+		}
+
+		return i.UnmarshalText(v)
+	default:
+		return fmt.Errorf("id: cannot scan %T into ID", src)
+	}
 }
