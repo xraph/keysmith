@@ -127,10 +127,46 @@ The extension resolves its store in this order:
 
 ## Extension options
 
-| Option | Description |
-| ------ | ----------- |
-| `WithEngineOptions(...keysmith.Option)` | Engine configuration options |
-| `WithHookExtension(plugin.Plugin)` | Register a lifecycle plugin |
-| `WithConfig(Config)` | Override default extension configuration |
-| `WithLogger(*slog.Logger)` | Set the logger |
-| `WithGroveDatabase(name)` | Resolves a grove.DB by name from the DI container to auto-construct the store |
+| Option | Type | Default | Description |
+| ------ | ---- | ------- | ----------- |
+| `WithEngineOptions(opts...)` | `...keysmith.Option` | -- | Engine configuration options |
+| `WithHookExtension(x)` | `plugin.Plugin` | -- | Register a lifecycle plugin (repeatable) |
+| `WithConfig(cfg)` | `Config` | defaults | Override default extension configuration |
+| `WithLogger(l)` | `*slog.Logger` | `slog.Default()` | Set the logger |
+| `WithDisableRoutes()` | -- | `false` | Skip HTTP route registration |
+| `WithDisableMigrate()` | -- | `false` | Skip migrations on Start |
+| `WithBasePath(path)` | `string` | `""` | URL prefix for keysmith routes |
+| `WithGroveDatabase(name)` | `string` | `""` | Named grove.DB to resolve from DI |
+| `WithRequireConfig(b)` | `bool` | `false` | Require config in YAML files |
+
+## File-based configuration (YAML)
+
+When running as a Forge extension, Keysmith automatically loads configuration from YAML config files. The extension looks for config under the following keys (in order):
+
+1. `extensions.keysmith` -- standard Forge extension config namespace
+2. `keysmith` -- top-level shorthand
+
+### Example
+
+```yaml
+# forge.yaml
+extensions:
+  keysmith:
+    disable_routes: false
+    disable_migrate: false
+    base_path: "/keysmith"
+    grove_database: ""
+```
+
+### Config fields
+
+| YAML Key | Type | Default | Description |
+|----------|------|---------|-------------|
+| `disable_routes` | `bool` | `false` | Skip HTTP route registration |
+| `disable_migrate` | `bool` | `false` | Skip migrations on Start |
+| `base_path` | `string` | `""` | URL prefix for all routes |
+| `grove_database` | `string` | `""` | Named grove.DB from DI |
+
+### Merge behaviour
+
+File-based configuration is merged with programmatic options. Programmatic boolean flags (`DisableRoutes`, `DisableMigrate`) always win when set to `true`. For other fields, YAML values take precedence, then programmatic values, then defaults.

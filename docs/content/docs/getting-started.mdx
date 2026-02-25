@@ -123,7 +123,7 @@ When you are ready for production, swap the memory store for PostgreSQL. The API
 ```go
 import "github.com/xraph/keysmith/store/postgres"
 
-pgStore, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/mydb")
+pgStore, err := postgres.NewFromDSN(ctx, "postgres://user:pass@localhost:5432/mydb")
 if err != nil {
     log.Fatal(err)
 }

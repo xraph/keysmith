@@ -1,25 +1,48 @@
 ---
 title: PostgreSQL Store
-description: Production PostgreSQL backend using pgx/v5.
+description: Production PostgreSQL backend using grove ORM with pgdriver.
 ---
 
-The PostgreSQL store provides a full `store.Store` implementation using `pgx/v5` connection pools. It includes embedded SQL migrations and is the recommended backend for production.
+The PostgreSQL store provides a full `store.Store` implementation using grove ORM with the pgdriver backend. It includes embedded SQL migrations and is the recommended backend for production.
 
 ## Setup
+
+### From a DSN
 
 ```go
 import "github.com/xraph/keysmith/store/postgres"
 
-pgStore, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/mydb")
+pgStore, err := postgres.NewFromDSN(ctx, "postgres://user:pass@localhost:5432/mydb")
 if err != nil {
     log.Fatal(err)
 }
 defer pgStore.Close()
 ```
 
+### From an existing grove.DB
+
+If your application already manages a `grove.DB` connection (e.g. via the Grove extension), pass the unwrapped pgdriver instance:
+
+```go
+import (
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/pgdriver"
+    "github.com/xraph/keysmith/store/postgres"
+)
+
+db, err := grove.Open(pgdriver.New(
+    pgdriver.WithDSN("postgres://user:pass@localhost:5432/mydb"),
+))
+if err != nil {
+    log.Fatal(err)
+}
+
+pgStore := postgres.New(pgdriver.Unwrap(db))
+```
+
 ## Migrations
 
-The store embeds SQL migrations using `go:embed`. Run them on startup:
+The store embeds SQL migrations. Run them on startup:
 
 ```go
 if err := pgStore.Migrate(ctx); err != nil {
@@ -27,7 +50,7 @@ if err := pgStore.Migrate(ctx); err != nil {
 }
 ```
 
-This creates five tables:
+This creates seven tables:
 
 | Table | Description |
 | ----- | ----------- |
@@ -40,17 +63,6 @@ This creates five tables:
 | `keysmith_rotations` | Rotation history records |
 
 Migrations are idempotent and safe to run on every startup.
-
-## Connection pooling
-
-The store uses pgx's built-in connection pool. Configure pool settings via the connection string or pgx options:
-
-```go
-// Via connection string
-pgStore, err := postgres.New(ctx,
-    "postgres://user:pass@localhost:5432/mydb?pool_max_conns=20",
-)
-```
 
 ## Health checks
 
