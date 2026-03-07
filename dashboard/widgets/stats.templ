@@ -1,0 +1,15 @@
+package widgets
+
+import (
+	"strconv"
+
+	"github.com/xraph/keysmith/dashboard/components"
+)
+
+// StatsWidget renders key statistics for the dashboard widget area.
+templ StatsWidget(totalKeys int, activeKeys int) {
+	<div class="grid grid-cols-2 gap-4">
+		@components.StatCard("key-round", "Total Keys", strconv.Itoa(totalKeys), "All API keys")
+		@components.StatCard("check-circle", "Active", strconv.Itoa(activeKeys), "Currently active")
+	</div>
+}

@@ -1,0 +1,119 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/keysmith/dashboard/components"
+	"github.com/xraph/keysmith/policy"
+)
+
+// PoliciesPageData holds data for the policies list page.
+type PoliciesPageData struct {
+	Policies   []*policy.Policy
+	TotalCount int64
+}
+
+templ PoliciesPage(data PoliciesPageData) {
+	<div class="space-y-6">
+		<!-- Header -->
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<h1 class="text-3xl font-bold tracking-tight">Policies</h1>
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.FormatInt(data.TotalCount, 10) }
+				}
+			</div>
+		</div>
+		<!-- Description -->
+		<p class="text-muted-foreground">Reusable rules for rate limiting, quotas, and key lifecycle management.</p>
+		<!-- Policies Table -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Content() {
+				if len(data.Policies) == 0 {
+					@components.EmptyState("shield-check", "No policies defined", "Create a policy to enforce rate limits, quotas, and key lifecycle rules.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Name
+								}
+								@table.Head() {
+									Rate Limit
+								}
+								@table.Head() {
+									Daily Quota
+								}
+								@table.Head() {
+									Monthly Quota
+								}
+								@table.Head() {
+									Key Lifetime
+								}
+								@table.Head() {
+									Created
+								}
+							}
+						}
+						@table.Body() {
+							for _, p := range data.Policies {
+								<tr
+									class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+									hx-get={ "./policies/detail?policy_id=" + p.ID.String() }
+									hx-target="#content"
+									hx-push-url="true"
+									hx-swap="innerHTML"
+								>
+									@table.Cell() {
+										<div class="space-y-0.5">
+											<span class="font-medium">{ p.Name }</span>
+											if p.Description != "" {
+												<p class="text-xs text-muted-foreground">{ p.Description }</p>
+											}
+										</div>
+									}
+									@table.Cell() {
+										if p.RateLimit > 0 {
+											<span class="text-sm">{ strconv.Itoa(p.RateLimit) } req/{ formatDuration(p.RateLimitWindow) }</span>
+										} else {
+											<span class="text-sm text-muted-foreground">Unlimited</span>
+										}
+									}
+									@table.Cell() {
+										if p.DailyQuota > 0 {
+											<span class="text-sm">{ strconv.FormatInt(p.DailyQuota, 10) }</span>
+										} else {
+											<span class="text-sm text-muted-foreground">None</span>
+										}
+									}
+									@table.Cell() {
+										if p.MonthlyQuota > 0 {
+											<span class="text-sm">{ strconv.FormatInt(p.MonthlyQuota, 10) }</span>
+										} else {
+											<span class="text-sm text-muted-foreground">None</span>
+										}
+									}
+									@table.Cell() {
+										if p.MaxKeyLifetime > 0 {
+											<span class="text-sm">{ formatDuration(p.MaxKeyLifetime) }</span>
+										} else {
+											<span class="text-sm text-muted-foreground">Unlimited</span>
+										}
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground text-sm">
+											{ p.CreatedAt.Format("Jan 02, 2006") }
+										</span>
+									}
+								</tr>
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}

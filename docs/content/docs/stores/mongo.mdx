@@ -29,7 +29,7 @@ eng, err := keysmith.NewEngine(keysmith.WithStore(s))
 
 ## Migrations
 
-The store creates indexes on all Keysmith collections. Run them on startup:
+The store creates collections with JSON Schema validation (auto-generated from Grove model structs) and applies indexes on all Keysmith collections. Run them on startup:
 
 ```go
 if err := s.Migrate(ctx); err != nil {
@@ -56,7 +56,7 @@ Migrations are idempotent and safe to run on every startup.
 | Aspect | Detail |
 |--------|--------|
 | Driver | grove ORM + mongodriver |
-| Migrations | Index creation on collections |
+| Migrations | Grove migrations with JSON Schema validation + indexes |
 | Transactions | MongoDB sessions (replica-set required for multi-doc txns) |
 | Concurrency | MongoDB native concurrency model |
 | Subsystems | keys, policies, scopes, usages, rotations |
@@ -73,6 +73,17 @@ if err := s.Ping(ctx); err != nil {
 
 ```go
 eng, err := keysmith.NewEngine(keysmith.WithStore(s))
+```
+
+## Grove Migrations
+
+The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
+
+```go
+import mongostore "github.com/xraph/keysmith/store/mongo"
+
+// mongostore.Migrations is a migrate.Group for the keysmith mongo store.
+// Register it with the grove migration orchestrator for coordinated migrations.
 ```
 
 ## When to use

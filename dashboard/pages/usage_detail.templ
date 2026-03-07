@@ -1,0 +1,212 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/keysmith/dashboard/components"
+	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/usage"
+)
+
+// UsageDetailData holds data for the key usage detail page.
+type UsageDetailData struct {
+	Key          *key.Key
+	Records      []*usage.Record
+	Aggregations []*usage.Aggregation
+	TotalCount   int64
+}
+
+templ UsageDetailPage(data UsageDetailData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "./usage",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Usage
+		}
+		<!-- Key Summary -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-4">
+					<div class="flex h-14 w-14 items-center justify-center rounded-sm bg-primary/10 text-primary">
+						@icons.KeyRound(icons.WithSize(28))
+					</div>
+					<div>
+						@card.Title() {
+							Usage: { data.Key.Name }
+						}
+						@card.Description() {
+							<code class="text-xs">{ data.Key.Prefix }_****{ data.Key.Hint }</code>
+						}
+					</div>
+				</div>
+			}
+		}
+		<!-- Aggregate Stats -->
+		if len(data.Aggregations) > 0 {
+			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+				@components.StatCard("bar-chart-3", "Total Requests", strconv.FormatInt(data.TotalCount, 10), "All-time")
+				@components.StatCard("alert-triangle", "Error Rate", computeErrorRate(data.Aggregations), "")
+				@components.StatCard("timer", "P50 Latency", computeAvgLatency(data.Aggregations), "Median response time")
+				@components.StatCard("zap", "P99 Latency", computeP99Latency(data.Aggregations), "Tail latency")
+			</div>
+		}
+		<!-- Aggregation Table -->
+		if len(data.Aggregations) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Aggregated Usage
+					}
+				}
+				@card.Content() {
+					@separator.Separator()
+					<div class="mt-4">
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() {
+										Period
+									}
+									@table.Head() {
+										Requests
+									}
+									@table.Head() {
+										Errors
+									}
+									@table.Head() {
+										P50
+									}
+									@table.Head() {
+										P99
+									}
+								}
+							}
+							@table.Body() {
+								for _, a := range data.Aggregations {
+									@table.Row() {
+										@table.Cell() {
+											<span class="text-sm font-medium">{ a.PeriodStart.Format("Jan 02, 2006") }</span>
+										}
+										@table.Cell() {
+											<span class="text-sm">{ strconv.FormatInt(a.RequestCount, 10) }</span>
+										}
+										@table.Cell() {
+											if a.ErrorCount > 0 {
+												@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+													{ strconv.FormatInt(a.ErrorCount, 10) }
+												}
+											} else {
+												<span class="text-sm text-muted-foreground">0</span>
+											}
+										}
+										@table.Cell() {
+											<span class="text-sm">{ strconv.FormatInt(a.P50Latency, 10) }ms</span>
+										}
+										@table.Cell() {
+											<span class="text-sm">{ strconv.FormatInt(a.P99Latency, 10) }ms</span>
+										}
+									}
+								}
+							}
+						}
+					</div>
+				}
+			}
+		}
+		<!-- Usage Records -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Request Log
+				}
+				@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+					{ strconv.FormatInt(data.TotalCount, 10) }
+				}
+			}
+			@card.Content() {
+				if len(data.Records) == 0 {
+					@components.EmptyState("bar-chart-3", "No usage recorded", "No requests have been made with this key yet.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Endpoint
+								}
+								@table.Head() {
+									Method
+								}
+								@table.Head() {
+									Status
+								}
+								@table.Head() {
+									Latency
+								}
+								@table.Head() {
+									IP
+								}
+								@table.Head() {
+									Time
+								}
+							}
+						}
+						@table.Body() {
+							for _, r := range data.Records {
+								@table.Row() {
+									@table.Cell() {
+										<span class="text-sm font-mono">{ r.Endpoint }</span>
+									}
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											{ r.Method }
+										}
+									}
+									@table.Cell() {
+										@statusCodeBadge(r.StatusCode)
+									}
+									@table.Cell() {
+										<span class="text-sm text-muted-foreground">{ strconv.FormatInt(r.Latency.Milliseconds(), 10) }ms</span>
+									}
+									@table.Cell() {
+										<span class="text-sm text-muted-foreground font-mono">{ r.IPAddress }</span>
+									}
+									@table.Cell() {
+										<span class="text-sm text-muted-foreground">{ formatTimeShort(r.CreatedAt) }</span>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}
+
+// computeP99Latency calculates the average P99 latency from aggregations.
+func computeP99Latency(aggs []*usage.Aggregation) string {
+	if len(aggs) == 0 {
+		return "0ms"
+	}
+	var total int64
+	for _, a := range aggs {
+		total += a.P99Latency
+	}
+	avg := total / int64(len(aggs))
+	return strconv.FormatInt(avg, 10) + "ms"
+}

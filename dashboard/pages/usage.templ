@@ -1,0 +1,192 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/keysmith/dashboard/components"
+	"github.com/xraph/keysmith/usage"
+)
+
+// UsagePageData holds data for the usage analytics page.
+type UsagePageData struct {
+	Records      []*usage.Record
+	Aggregations []*usage.Aggregation
+	TotalCount   int64
+}
+
+templ UsagePage(data UsagePageData) {
+	<div class="space-y-6">
+		<!-- Header -->
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Usage Analytics</h1>
+			<p class="text-muted-foreground mt-1">Monitor API key usage across your system.</p>
+		</div>
+		<!-- Stats Grid -->
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+			@components.StatCard("bar-chart-3", "Total Requests", strconv.FormatInt(data.TotalCount, 10), "All-time requests")
+			@components.StatCard("alert-triangle", "Error Rate", computeErrorRate(data.Aggregations), "From aggregations")
+			@components.StatCard("timer", "Avg Latency", computeAvgLatency(data.Aggregations), "P50 latency")
+		</div>
+		<!-- Aggregation Summary -->
+		if len(data.Aggregations) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					@card.Title() {
+						Usage Aggregations
+					}
+					@card.Description() {
+						Aggregated usage statistics by period.
+					}
+				}
+				@card.Content() {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Period
+								}
+								@table.Head() {
+									Requests
+								}
+								@table.Head() {
+									Errors
+								}
+								@table.Head() {
+									P50 Latency
+								}
+								@table.Head() {
+									P99 Latency
+								}
+							}
+						}
+						@table.Body() {
+							for _, a := range data.Aggregations {
+								@table.Row() {
+									@table.Cell() {
+										<span class="text-sm font-medium">{ a.PeriodStart.Format("Jan 02, 2006") }</span>
+									}
+									@table.Cell() {
+										<span class="text-sm">{ strconv.FormatInt(a.RequestCount, 10) }</span>
+									}
+									@table.Cell() {
+										if a.ErrorCount > 0 {
+											@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+												{ strconv.FormatInt(a.ErrorCount, 10) }
+											}
+										} else {
+											<span class="text-sm text-muted-foreground">0</span>
+										}
+									}
+									@table.Cell() {
+										<span class="text-sm">{ strconv.FormatInt(a.P50Latency, 10) + "ms" }</span>
+									}
+									@table.Cell() {
+										<span class="text-sm">{ strconv.FormatInt(a.P99Latency, 10) + "ms" }</span>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		<!-- Recent Usage Records -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Recent Requests
+				}
+				@card.Description() {
+					The most recent API key usage events.
+				}
+			}
+			@card.Content() {
+				if len(data.Records) == 0 {
+					@components.EmptyState("bar-chart-3", "No usage recorded", "Usage events will appear here once API keys are used.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Endpoint
+								}
+								@table.Head() {
+									Method
+								}
+								@table.Head() {
+									Status
+								}
+								@table.Head() {
+									Latency
+								}
+								@table.Head() {
+									IP Address
+								}
+								@table.Head() {
+									Time
+								}
+							}
+						}
+						@table.Body() {
+							for _, r := range data.Records {
+								@table.Row() {
+									@table.Cell() {
+										<span class="text-sm font-mono">{ r.Endpoint }</span>
+									}
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+											{ r.Method }
+										}
+									}
+									@table.Cell() {
+										@statusCodeBadge(r.StatusCode)
+									}
+									@table.Cell() {
+										<span class="text-sm text-muted-foreground">{ strconv.FormatInt(r.Latency.Milliseconds(), 10) + "ms" }</span>
+									}
+									@table.Cell() {
+										<span class="text-sm text-muted-foreground font-mono">{ r.IPAddress }</span>
+									}
+									@table.Cell() {
+										<span class="text-sm text-muted-foreground">{ formatTimeShort(r.CreatedAt) }</span>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}
+
+// computeErrorRate calculates the error rate percentage from aggregations.
+func computeErrorRate(aggs []*usage.Aggregation) string {
+	var totalReqs, totalErrors int64
+	for _, a := range aggs {
+		totalReqs += a.RequestCount
+		totalErrors += a.ErrorCount
+	}
+	if totalReqs == 0 {
+		return "0%"
+	}
+	rate := float64(totalErrors) / float64(totalReqs) * 100
+	return fmt.Sprintf("%.1f%%", rate)
+}
+
+// computeAvgLatency calculates the average P50 latency from aggregations.
+func computeAvgLatency(aggs []*usage.Aggregation) string {
+	if len(aggs) == 0 {
+		return "0ms"
+	}
+	var total int64
+	for _, a := range aggs {
+		total += a.P50Latency
+	}
+	avg := total / int64(len(aggs))
+	return fmt.Sprintf("%dms", avg)
+}

@@ -1,0 +1,388 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/keysmith/dashboard/components"
+	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/policy"
+	"github.com/xraph/keysmith/rotation"
+	"github.com/xraph/keysmith/scope"
+	"github.com/xraph/keysmith/usage"
+)
+
+// KeyDetailData holds all data for the key detail page.
+type KeyDetailData struct {
+	Key        *key.Key
+	Policy     *policy.Policy
+	Scopes     []*scope.Scope
+	Rotations  []*rotation.Record
+	UsageCount int64
+	Usage      []*usage.Record
+}
+
+templ KeyDetailPage(data KeyDetailData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "./keys",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Keys
+		}
+		<!-- Key Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<div class="flex h-14 w-14 items-center justify-center rounded-sm bg-primary/10 text-primary">
+							@icons.KeyRound(icons.WithSize(28))
+						</div>
+						<div>
+							@card.Title() {
+								{ data.Key.Name }
+							}
+							@card.Description() {
+								if data.Key.Description != "" {
+									{ data.Key.Description }
+								} else {
+									<code class="text-xs">{ data.Key.Prefix }_****{ data.Key.Hint }</code>
+								}
+							}
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						@stateBadge(data.Key.State)
+						@envBadge(data.Key.Environment)
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+					@fieldRow("Key ID", data.Key.ID.String())
+					@fieldRow("Prefix", data.Key.Prefix)
+					@fieldRow("Hint", "****"+data.Key.Hint)
+					@fieldRow("Environment", string(data.Key.Environment))
+					@fieldRow("State", string(data.Key.State))
+					@fieldRow("Created By", data.Key.CreatedBy)
+					@fieldRow("Created", formatTime(data.Key.CreatedAt))
+					@fieldRow("Updated", formatTime(data.Key.UpdatedAt))
+					if data.Key.LastUsedAt != nil {
+						@fieldRow("Last Used", formatTime(*data.Key.LastUsedAt))
+					}
+					if data.Key.ExpiresAt != nil {
+						@fieldRow("Expires", formatTime(*data.Key.ExpiresAt))
+					}
+					if data.Key.RotatedAt != nil {
+						@fieldRow("Last Rotated", formatTime(*data.Key.RotatedAt))
+					}
+					if data.Key.RevokedAt != nil {
+						@fieldRow("Revoked At", formatTime(*data.Key.RevokedAt))
+					}
+				</dl>
+			}
+			@card.Footer() {
+				<div class="flex items-center gap-2">
+					if data.Key.State == key.StateActive {
+						@button.Button(button.Props{
+							Variant: button.VariantOutline,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "./keys/detail?key_id=" + data.Key.ID.String() + "&action=rotate&reason=manual",
+								"hx-target":   "#content",
+								"hx-swap":     "innerHTML",
+								"hx-confirm":  "Are you sure you want to rotate this key? A new key will be generated and the old key will enter a grace period.",
+							},
+						}) {
+							@icons.RefreshCw(icons.WithSize(14))
+							Rotate
+						}
+						@button.Button(button.Props{
+							Variant: button.VariantOutline,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "./keys/detail?key_id=" + data.Key.ID.String() + "&action=suspend",
+								"hx-target":   "#content",
+								"hx-swap":     "innerHTML",
+								"hx-confirm":  "Are you sure you want to suspend this key? It can be reactivated later.",
+							},
+						}) {
+							@icons.CirclePause(icons.WithSize(14))
+							Suspend
+						}
+						@button.Button(button.Props{
+							Variant: button.VariantDestructive,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "./keys/detail?key_id=" + data.Key.ID.String() + "&action=revoke",
+								"hx-target":   "#content",
+								"hx-swap":     "innerHTML",
+								"hx-confirm":  "Are you sure you want to revoke this key? This action is permanent and cannot be undone.",
+							},
+						}) {
+							@icons.XCircle(icons.WithSize(14))
+							Revoke
+						}
+					}
+					if data.Key.State == key.StateSuspended {
+						@button.Button(button.Props{
+							Variant: button.VariantDefault,
+							Size:    button.SizeSm,
+							Attributes: templ.Attributes{
+								"hx-get":      "./keys/detail?key_id=" + data.Key.ID.String() + "&action=reactivate",
+								"hx-target":   "#content",
+								"hx-swap":     "innerHTML",
+								"hx-confirm":  "Are you sure you want to reactivate this key?",
+							},
+						}) {
+							@icons.CheckCircle(icons.WithSize(14))
+							Reactivate
+						}
+					}
+				</div>
+			}
+		}
+		<!-- Stats Grid -->
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+			@components.StatCard("bar-chart-3", "Usage", strconv.FormatInt(data.UsageCount, 10), "Total requests")
+			@components.StatCard("clock", "Age", keyAge(data.Key.CreatedAt), "Since creation")
+			@components.StatCard("refresh-cw", "Rotations", strconv.Itoa(len(data.Rotations)), "Total rotations")
+			@components.StatCard("activity", "Last Used", lastUsedText(data.Key), "")
+		</div>
+		<!-- Policy Card -->
+		if data.Policy != nil {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					<div class="flex items-center gap-3">
+						<div class="flex h-10 w-10 items-center justify-center rounded-sm bg-primary/10 text-primary">
+							@icons.ShieldCheck(icons.WithSize(20))
+						</div>
+						<div>
+							@card.Title() {
+								Policy: { data.Policy.Name }
+							}
+							@card.Description() {
+								{ data.Policy.Description }
+							}
+						</div>
+					</div>
+				}
+				@card.Content() {
+					@separator.Separator()
+					<dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+						if data.Policy.RateLimit > 0 {
+							@fieldRow("Rate Limit", strconv.Itoa(data.Policy.RateLimit)+" req/"+formatDuration(data.Policy.RateLimitWindow))
+						}
+						if data.Policy.BurstLimit > 0 {
+							@fieldRow("Burst Limit", strconv.Itoa(data.Policy.BurstLimit))
+						}
+						if data.Policy.DailyQuota > 0 {
+							@fieldRow("Daily Quota", strconv.FormatInt(data.Policy.DailyQuota, 10))
+						}
+						if data.Policy.MonthlyQuota > 0 {
+							@fieldRow("Monthly Quota", strconv.FormatInt(data.Policy.MonthlyQuota, 10))
+						}
+						if data.Policy.MaxKeyLifetime > 0 {
+							@fieldRow("Max Key Lifetime", formatDuration(data.Policy.MaxKeyLifetime))
+						}
+						if data.Policy.RotationPeriod > 0 {
+							@fieldRow("Rotation Period", formatDuration(data.Policy.RotationPeriod))
+						}
+						if data.Policy.GracePeriod > 0 {
+							@fieldRow("Grace Period", formatDuration(data.Policy.GracePeriod))
+						}
+					</dl>
+				}
+			}
+		}
+		<!-- Scopes Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					@card.Title() {
+						Assigned Scopes
+					}
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						{ strconv.Itoa(len(data.Scopes)) }
+					}
+				</div>
+			}
+			@card.Content() {
+				if len(data.Scopes) == 0 {
+					<p class="text-sm text-muted-foreground py-4 text-center">No scopes assigned.</p>
+				} else {
+					<div class="flex flex-wrap gap-2">
+						for _, s := range data.Scopes {
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								{ s.Name }
+							}
+						}
+					</div>
+				}
+			}
+		}
+		<!-- Recent Usage -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						@card.Title() {
+							Recent Usage
+						}
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantGhost,
+						Size:    button.SizeSm,
+						Attributes: templ.Attributes{
+							"hx-get":      "./usage/detail?key_id=" + data.Key.ID.String(),
+							"hx-target":   "#content",
+							"hx-swap":     "innerHTML",
+							"hx-push-url": "true",
+						},
+					}) {
+						View All
+					}
+				</div>
+			}
+			@card.Content() {
+				if len(data.Usage) == 0 {
+					<p class="text-sm text-muted-foreground py-4 text-center">No usage recorded yet.</p>
+				} else {
+					@usageTable(data.Usage)
+				}
+			}
+		}
+		<!-- Rotation History -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					@card.Title() {
+						Rotation History
+					}
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						{ strconv.Itoa(len(data.Rotations)) }
+					}
+				</div>
+			}
+			@card.Content() {
+				if len(data.Rotations) == 0 {
+					<p class="text-sm text-muted-foreground py-4 text-center">No rotations recorded.</p>
+				} else {
+					@rotationTable(data.Rotations)
+				}
+			}
+		}
+		<!-- Plugin-contributed sections slot -->
+		{ children... }
+	</div>
+}
+
+// usageTable renders a compact usage records table.
+templ usageTable(records []*usage.Record) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() {
+					Endpoint
+				}
+				@table.Head() {
+					Method
+				}
+				@table.Head() {
+					Status
+				}
+				@table.Head() {
+					Latency
+				}
+				@table.Head() {
+					Time
+				}
+			}
+		}
+		@table.Body() {
+			for _, r := range records {
+				@table.Row() {
+					@table.Cell() {
+						<span class="text-sm font-mono">{ r.Endpoint }</span>
+					}
+					@table.Cell() {
+						@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+							{ r.Method }
+						}
+					}
+					@table.Cell() {
+						@statusCodeBadge(r.StatusCode)
+					}
+					@table.Cell() {
+						<span class="text-sm text-muted-foreground">{ strconv.FormatInt(r.Latency.Milliseconds(), 10) + "ms" }</span>
+					}
+					@table.Cell() {
+						<span class="text-sm text-muted-foreground">{ formatTimeShort(r.CreatedAt) }</span>
+					}
+				}
+			}
+		}
+	}
+}
+
+// rotationTable renders a compact rotation records table.
+templ rotationTable(records []*rotation.Record) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() {
+					Reason
+				}
+				@table.Head() {
+					Grace Period
+				}
+				@table.Head() {
+					Grace Ends
+				}
+				@table.Head() {
+					Rotated At
+				}
+			}
+		}
+		@table.Body() {
+			for _, r := range records {
+				@table.Row() {
+					@table.Cell() {
+						@reasonBadge(r.Reason)
+					}
+					@table.Cell() {
+						<span class="text-sm text-muted-foreground">{ formatDuration(r.GraceTTL) }</span>
+					}
+					@table.Cell() {
+						<span class="text-sm text-muted-foreground">{ formatTime(r.GraceEnds) }</span>
+					}
+					@table.Cell() {
+						<span class="text-sm text-muted-foreground">{ formatTime(r.CreatedAt) }</span>
+					}
+				}
+			}
+		}
+	}
+}
+
+// lastUsedText returns a display string for the last used time.
+func lastUsedText(k *key.Key) string {
+	if k.LastUsedAt == nil {
+		return "Never"
+	}
+	return formatTimeShort(*k.LastUsedAt)
+}

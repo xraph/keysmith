@@ -1,7 +1,7 @@
 package extension
 
 import (
-	"log/slog"
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/plugin"
@@ -14,7 +14,7 @@ type ExtOption func(*Extension)
 func WithConfig(c Config) ExtOption { return func(e *Extension) { e.config = c } }
 
 // WithLogger sets the logger.
-func WithLogger(l *slog.Logger) ExtOption { return func(e *Extension) { e.logger = l } }
+func WithLogger(l log.Logger) ExtOption { return func(e *Extension) { e.logger = l } }
 
 // WithEngineOptions passes options to the underlying keysmith engine.
 func WithEngineOptions(opts ...keysmith.Option) ExtOption {

@@ -1,0 +1,127 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/keysmith/key"
+)
+
+// KeyTable renders a table of API keys with clickable rows navigating to detail.
+templ KeyTable(keys []*key.Key) {
+	@table.Table() {
+		@table.Header() {
+			@table.Row() {
+				@table.Head() {
+					Name
+				}
+				@table.Head() {
+					Hint
+				}
+				@table.Head() {
+					Environment
+				}
+				@table.Head() {
+					State
+				}
+				@table.Head() {
+					Last Used
+				}
+				@table.Head() {
+					Created
+				}
+			}
+		}
+		@table.Body() {
+			for _, k := range keys {
+				<tr
+					class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+					hx-get={ "./keys/detail?key_id=" + k.ID.String() }
+					hx-target="#content"
+					hx-push-url="true"
+					hx-swap="innerHTML"
+				>
+					@table.Cell() {
+						<div class="flex items-center gap-2">
+							<span class="font-medium">{ k.Name }</span>
+						</div>
+					}
+					@table.Cell() {
+						<code class="text-xs bg-muted px-1.5 py-0.5 rounded-sm">{ "****" + k.Hint }</code>
+					}
+					@table.Cell() {
+						@envBadge(k.Environment)
+					}
+					@table.Cell() {
+						@stateBadge(k.State)
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">
+							if k.LastUsedAt != nil {
+								{ k.LastUsedAt.Format("Jan 02, 15:04") }
+							} else {
+								Never
+							}
+						</span>
+					}
+					@table.Cell() {
+						<span class="text-muted-foreground text-sm">
+							{ k.CreatedAt.Format("Jan 02, 2006") }
+						</span>
+					}
+				</tr>
+			}
+		}
+	}
+}
+
+// stateBadge renders a colored badge for a key state.
+templ stateBadge(state key.State) {
+	switch state {
+		case key.StateActive:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Active
+			}
+		case key.StateRotated:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Rotated
+			}
+		case key.StateExpired:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Expired
+			}
+		case key.StateRevoked:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Revoked
+			}
+		case key.StateSuspended:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Suspended
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(state) }
+			}
+	}
+}
+
+// envBadge renders a colored badge for a key environment.
+templ envBadge(env key.Environment) {
+	switch env {
+		case key.EnvLive:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Live
+			}
+		case key.EnvTest:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Test
+			}
+		case key.EnvStaging:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Staging
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(env) }
+			}
+	}
+}

@@ -1,7 +1,7 @@
 package keysmith
 
 import (
-	"log/slog"
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/keysmith/plugin"
 	"github.com/xraph/keysmith/store"
@@ -26,4 +26,4 @@ func WithRateLimiter(r RateLimiter) Option { return func(e *Engine) { e.ratelimi
 func WithExtension(x plugin.Plugin) Option { return func(e *Engine) { e.hooks.Register(x) } }
 
 // WithLogger sets the logger.
-func WithLogger(l *slog.Logger) Option { return func(e *Engine) { e.logger = l } }
+func WithLogger(l log.Logger) Option { return func(e *Engine) { e.logger = l } }

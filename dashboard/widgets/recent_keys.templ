@@ -1,0 +1,37 @@
+package widgets
+
+import (
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/keysmith/key"
+)
+
+// RecentKeysWidget renders the most recently created keys.
+templ RecentKeysWidget(keys []*key.Key) {
+	if len(keys) == 0 {
+		<p class="text-sm text-muted-foreground p-4 text-center">No keys yet.</p>
+	} else {
+		@table.Table() {
+			@table.Body() {
+				for _, k := range keys {
+					<tr
+						class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+						hx-get={ "./keys/detail?key_id=" + k.ID.String() }
+						hx-target="#content"
+						hx-push-url="true"
+						hx-swap="innerHTML"
+					>
+						@table.Cell() {
+							<span class="text-sm font-medium">{ k.Name }</span>
+						}
+						@table.Cell() {
+							<code class="text-xs bg-muted px-1.5 py-0.5 rounded-sm">{ "****" + k.Hint }</code>
+						}
+						@table.Cell() {
+							<span class="text-xs text-muted-foreground">{ k.CreatedAt.Format("Jan 02") }</span>
+						}
+					</tr>
+				}
+			}
+		}
+	}
+}

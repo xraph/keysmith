@@ -1,0 +1,124 @@
+package pages
+
+import (
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/icons"
+)
+
+// SettingsPageData holds data for the settings page.
+type SettingsPageData struct {
+	BasePath       string
+	PluginNames    []string
+	StoreDriver    string
+	DisableRoutes  bool
+	DisableMigrate bool
+}
+
+templ SettingsPage(data SettingsPageData) {
+	<div class="space-y-6">
+		<!-- Header -->
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Settings</h1>
+			<p class="text-muted-foreground mt-1">Keysmith engine configuration and plugin information.</p>
+		</div>
+		<!-- Engine Configuration Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					<div class="flex h-10 w-10 items-center justify-center rounded-sm bg-primary/10 text-primary">
+						@icons.Settings(icons.WithSize(20))
+					</div>
+					<div>
+						@card.Title() {
+							Engine Configuration
+						}
+						@card.Description() {
+							Current Keysmith engine settings.
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					@settingField("API Base Path", data.BasePath)
+					@settingField("Store Driver", data.StoreDriver)
+					@settingBool("Routes Enabled", !data.DisableRoutes)
+					@settingBool("Auto-Migration", !data.DisableMigrate)
+				</dl>
+			}
+		}
+		<!-- Plugins Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					<div class="flex h-10 w-10 items-center justify-center rounded-sm bg-primary/10 text-primary">
+						@icons.Puzzle(icons.WithSize(20))
+					</div>
+					<div>
+						@card.Title() {
+							Registered Plugins
+						}
+						@card.Description() {
+							Lifecycle plugins registered with the engine.
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<div class="mt-4">
+					if len(data.PluginNames) == 0 {
+						<p class="text-sm text-muted-foreground py-4 text-center">No plugins registered.</p>
+					} else {
+						<ul class="space-y-2">
+							for _, name := range data.PluginNames {
+								<li class="flex items-center gap-2 text-sm">
+									<span class="h-2 w-2 rounded-full bg-green-500"></span>
+									{ name }
+								</li>
+							}
+						</ul>
+					}
+				</div>
+			}
+		}
+		<!-- Plugin-contributed sections slot -->
+		{ children... }
+	</div>
+}
+
+// settingField renders a read-only setting field.
+templ settingField(label string, value string) {
+	<div class="space-y-1">
+		<dt class="text-sm font-medium text-muted-foreground">{ label }</dt>
+		<dd class="text-sm font-mono bg-muted px-2 py-1 rounded-sm">
+			if value != "" {
+				{ value }
+			} else {
+				<span class="text-muted-foreground italic">Default</span>
+			}
+		</dd>
+	</div>
+}
+
+// settingBool renders a boolean setting field.
+templ settingBool(label string, enabled bool) {
+	<div class="space-y-1">
+		<dt class="text-sm font-medium text-muted-foreground">{ label }</dt>
+		<dd class="text-sm">
+			if enabled {
+				<span class="inline-flex items-center gap-1 text-green-600">
+					@icons.CheckCircle(icons.WithSize(14))
+					Enabled
+				</span>
+			} else {
+				<span class="inline-flex items-center gap-1 text-muted-foreground">
+					@icons.XCircle(icons.WithSize(14))
+					Disabled
+				</span>
+			}
+		</dd>
+	</div>
+}

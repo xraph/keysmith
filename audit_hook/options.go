@@ -1,6 +1,6 @@
 package audithook
 
-import "log/slog"
+import log "github.com/xraph/go-utils/log"
 
 // Option configures an Extension.
 type Option func(*Extension)
@@ -17,7 +17,7 @@ func WithEnabled(actions ...string) Option {
 }
 
 // WithLogger sets the logger for recording errors.
-func WithLogger(logger *slog.Logger) Option {
+func WithLogger(logger log.Logger) Option {
 	return func(e *Extension) {
 		e.logger = logger
 	}

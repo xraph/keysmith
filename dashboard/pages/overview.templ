@@ -1,0 +1,104 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/keysmith/dashboard/components"
+	"github.com/xraph/keysmith/key"
+)
+
+// OverviewStats holds aggregate counts for the overview page.
+type OverviewStats struct {
+	TotalKeys    int
+	ActiveKeys   int
+	TotalPolicies int
+	TotalScopes  int
+}
+
+templ OverviewPage(stats OverviewStats, recentKeys []*key.Key) {
+	<div class="space-y-8">
+		<!-- Page Header -->
+		<div>
+			<h1 class="text-3xl font-bold tracking-tight">Overview</h1>
+			<p class="text-muted-foreground mt-1">Monitor your API key management system at a glance.</p>
+		</div>
+		<!-- Stats Grid -->
+		<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+			@components.StatCard("key-round", "Total Keys", strconv.Itoa(stats.TotalKeys), "All API keys")
+			@components.StatCard("check-circle", "Active Keys", strconv.Itoa(stats.ActiveKeys), "Currently active")
+			@components.StatCard("shield-check", "Policies", strconv.Itoa(stats.TotalPolicies), "Key policies")
+			@components.StatCard("lock", "Scopes", strconv.Itoa(stats.TotalScopes), "Permission scopes")
+		</div>
+		<!-- Recent Keys -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				@card.Title() {
+					Recent API Keys
+				}
+				@card.Description() {
+					The most recently created API keys.
+				}
+			}
+			@card.Content() {
+				if len(recentKeys) == 0 {
+					@components.EmptyState("key-round", "No API keys yet", "Create your first API key to get started.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Name
+								}
+								@table.Head() {
+									Hint
+								}
+								@table.Head() {
+									Environment
+								}
+								@table.Head() {
+									State
+								}
+								@table.Head() {
+									Created
+								}
+							}
+						}
+						@table.Body() {
+							for _, k := range recentKeys {
+								<tr
+									class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+									hx-get={ "./keys/detail?key_id=" + k.ID.String() }
+									hx-target="#content"
+									hx-push-url="true"
+									hx-swap="innerHTML"
+								>
+									@table.Cell() {
+										<span class="font-medium">{ k.Name }</span>
+									}
+									@table.Cell() {
+										<code class="text-xs bg-muted px-1.5 py-0.5 rounded-sm">{ "****" + k.Hint }</code>
+									}
+									@table.Cell() {
+										@envBadge(k.Environment)
+									}
+									@table.Cell() {
+										@stateBadge(k.State)
+									}
+									@table.Cell() {
+										<span class="text-muted-foreground text-sm">
+											{ k.CreatedAt.Format("Jan 02, 2006") }
+										</span>
+									}
+								</tr>
+							}
+						}
+					}
+				}
+			}
+		}
+		<!-- Plugin-contributed sections slot -->
+		{ children... }
+	</div>
+}

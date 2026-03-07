@@ -4,7 +4,8 @@ package wardenhook
 
 import (
 	"context"
-	"log/slog"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/plugin"
@@ -35,7 +36,7 @@ type Extension struct {
 	bridge      WardenBridge
 	autoAssign  bool
 	defaultRole string
-	logger      *slog.Logger
+	logger      log.Logger
 }
 
 // New creates a Warden bridge extension.
@@ -44,7 +45,7 @@ func New(bridge WardenBridge, opts ...Option) *Extension {
 		bridge:      bridge,
 		autoAssign:  true,
 		defaultRole: "api-key",
-		logger:      slog.Default(),
+		logger:      log.NewNoopLogger(),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -61,8 +62,8 @@ func (e *Extension) OnKeyCreated(ctx context.Context, k *key.Key) error {
 	if len(k.Scopes) > 0 {
 		if err := e.bridge.SyncScopesToPermissions(ctx, k.TenantID, k.Scopes); err != nil {
 			e.logger.Warn("warden_hook: failed to sync scopes to permissions",
-				"key_id", k.ID.String(),
-				"error", err,
+				log.String("key_id", k.ID.String()),
+				log.Any("error", err),
 			)
 		}
 	}
@@ -70,9 +71,9 @@ func (e *Extension) OnKeyCreated(ctx context.Context, k *key.Key) error {
 	if e.autoAssign {
 		if err := e.bridge.AssignRoleToAPIKey(ctx, k.TenantID, k.ID.String(), e.defaultRole); err != nil {
 			e.logger.Warn("warden_hook: failed to assign role to API key",
-				"key_id", k.ID.String(),
-				"role", e.defaultRole,
-				"error", err,
+				log.String("key_id", k.ID.String()),
+				log.String("role", e.defaultRole),
+				log.Any("error", err),
 			)
 		}
 	}
@@ -85,8 +86,8 @@ func (e *Extension) OnKeyCreated(ctx context.Context, k *key.Key) error {
 func (e *Extension) OnKeyRevoked(ctx context.Context, k *key.Key, _ string) error {
 	if err := e.bridge.UnassignRoleFromAPIKey(ctx, k.TenantID, k.ID.String()); err != nil {
 		e.logger.Warn("warden_hook: failed to unassign role from revoked API key",
-			"key_id", k.ID.String(),
-			"error", err,
+			log.String("key_id", k.ID.String()),
+			log.Any("error", err),
 		)
 	}
 	return nil

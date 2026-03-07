@@ -1,0 +1,209 @@
+package pages
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/rotation"
+)
+
+// stateBadge renders a colored badge for a key state.
+templ stateBadge(state key.State) {
+	switch state {
+		case key.StateActive:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Active
+			}
+		case key.StateRotated:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Rotated
+			}
+		case key.StateExpired:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Expired
+			}
+		case key.StateRevoked:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Revoked
+			}
+		case key.StateSuspended:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Suspended
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(state) }
+			}
+	}
+}
+
+// envBadge renders a colored badge for a key environment.
+templ envBadge(env key.Environment) {
+	switch env {
+		case key.EnvLive:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Live
+			}
+		case key.EnvTest:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Test
+			}
+		case key.EnvStaging:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Staging
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(env) }
+			}
+	}
+}
+
+// reasonBadge renders a colored badge for a rotation reason.
+templ reasonBadge(reason rotation.Reason) {
+	switch reason {
+		case rotation.ReasonScheduled:
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Scheduled
+			}
+		case rotation.ReasonManual:
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Manual
+			}
+		case rotation.ReasonCompromise:
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Compromise
+			}
+		case rotation.ReasonPolicy:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Policy
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ string(reason) }
+			}
+	}
+}
+
+// statusCodeBadge renders a colored badge for HTTP status codes.
+templ statusCodeBadge(code int) {
+	if code >= 200 && code < 300 {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			{ fmt.Sprintf("%d", code) }
+		}
+	} else if code >= 400 && code < 500 {
+		@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+			{ fmt.Sprintf("%d", code) }
+		}
+	} else if code >= 500 {
+		@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+			{ fmt.Sprintf("%d", code) }
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+			{ fmt.Sprintf("%d", code) }
+		}
+	}
+}
+
+// fieldRow renders a label-value pair for detail pages.
+templ fieldRow(label string, value string) {
+	<div class="space-y-1">
+		<dt class="text-sm font-medium text-muted-foreground">{ label }</dt>
+		<dd class="text-sm text-foreground">
+			if value != "" {
+				{ value }
+			} else {
+				<span class="text-muted-foreground italic">Not set</span>
+			}
+		</dd>
+	</div>
+}
+
+// formatDuration returns a human-readable duration string.
+func formatDuration(d time.Duration) string {
+	if d == 0 {
+		return "None"
+	}
+	if d >= 24*time.Hour {
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "1 day"
+		}
+		return fmt.Sprintf("%d days", days)
+	}
+	if d >= time.Hour {
+		hours := int(d.Hours())
+		if hours == 1 {
+			return "1 hour"
+		}
+		return fmt.Sprintf("%d hours", hours)
+	}
+	if d >= time.Minute {
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "1 minute"
+		}
+		return fmt.Sprintf("%d minutes", mins)
+	}
+	return d.String()
+}
+
+// formatTime returns a formatted time string.
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return "Never"
+	}
+	return t.Format("Jan 02, 2006 15:04")
+}
+
+// formatTimeShort returns a short formatted time string.
+func formatTimeShort(t time.Time) string {
+	if t.IsZero() {
+		return "Never"
+	}
+	return t.Format("Jan 02, 15:04")
+}
+
+// formatDate returns a date-only formatted string.
+func formatDate(t time.Time) string {
+	if t.IsZero() {
+		return "N/A"
+	}
+	return t.Format("Jan 02, 2006")
+}
+
+// truncateID shortens a TypeID for display.
+func truncateID(id string) string {
+	if len(id) <= 20 {
+		return id
+	}
+	return id[:20] + "..."
+}
+
+// joinStrings joins string slices with commas.
+func joinStrings(items []string) string {
+	if len(items) == 0 {
+		return "None"
+	}
+	return strings.Join(items, ", ")
+}
+
+// keyAge returns a human-readable age string for a key.
+func keyAge(created time.Time) string {
+	d := time.Since(created)
+	if d < time.Hour {
+		return fmt.Sprintf("%d min", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%d hrs", int(d.Hours()))
+	}
+	days := int(d.Hours() / 24)
+	if days == 1 {
+		return "1 day"
+	}
+	return fmt.Sprintf("%d days", days)
+}

@@ -1,0 +1,288 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/separator"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/policy"
+)
+
+// PolicyDetailData holds all data for the policy detail page.
+type PolicyDetailData struct {
+	Policy *policy.Policy
+	Keys   []*key.Key
+}
+
+templ PolicyDetailPage(data PolicyDetailData) {
+	<div class="space-y-6">
+		<!-- Back Button -->
+		@button.Button(button.Props{
+			Variant: button.VariantGhost,
+			Size:    button.SizeSm,
+			Attributes: templ.Attributes{
+				"hx-get":      "./policies",
+				"hx-target":   "#content",
+				"hx-swap":     "innerHTML",
+				"hx-push-url": "true",
+			},
+		}) {
+			@icons.ChevronLeft(icons.WithSize(16))
+			Back to Policies
+		}
+		<!-- Policy Info Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-4">
+					<div class="flex h-14 w-14 items-center justify-center rounded-sm bg-primary/10 text-primary">
+						@icons.ShieldCheck(icons.WithSize(28))
+					</div>
+					<div>
+						@card.Title() {
+							{ data.Policy.Name }
+						}
+						@card.Description() {
+							if data.Policy.Description != "" {
+								{ data.Policy.Description }
+							} else {
+								Policy ID: { truncateID(data.Policy.ID.String()) }
+							}
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					@fieldRow("Policy ID", data.Policy.ID.String())
+					@fieldRow("Created", formatTime(data.Policy.CreatedAt))
+					@fieldRow("Updated", formatTime(data.Policy.UpdatedAt))
+				</dl>
+			}
+		}
+		<!-- Rate Limiting Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					<div class="flex h-10 w-10 items-center justify-center rounded-sm bg-primary/10 text-primary">
+						@icons.Zap(icons.WithSize(20))
+					</div>
+					<div>
+						@card.Title() {
+							Rate Limiting
+						}
+						@card.Description() {
+							Request rate limits and burst configuration.
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+					if data.Policy.RateLimit > 0 {
+						@fieldRow("Rate Limit", strconv.Itoa(data.Policy.RateLimit)+" requests")
+					} else {
+						@fieldRow("Rate Limit", "Unlimited")
+					}
+					if data.Policy.RateLimitWindow > 0 {
+						@fieldRow("Window", formatDuration(data.Policy.RateLimitWindow))
+					} else {
+						@fieldRow("Window", "N/A")
+					}
+					if data.Policy.BurstLimit > 0 {
+						@fieldRow("Burst Limit", strconv.Itoa(data.Policy.BurstLimit)+" requests")
+					} else {
+						@fieldRow("Burst Limit", "None")
+					}
+				</dl>
+			}
+		}
+		<!-- Quotas Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					<div class="flex h-10 w-10 items-center justify-center rounded-sm bg-primary/10 text-primary">
+						@icons.ChartBar(icons.WithSize(20))
+					</div>
+					<div>
+						@card.Title() {
+							Quotas
+						}
+						@card.Description() {
+							Daily and monthly request quotas.
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+					if data.Policy.DailyQuota > 0 {
+						@fieldRow("Daily Quota", strconv.FormatInt(data.Policy.DailyQuota, 10)+" requests")
+					} else {
+						@fieldRow("Daily Quota", "Unlimited")
+					}
+					if data.Policy.MonthlyQuota > 0 {
+						@fieldRow("Monthly Quota", strconv.FormatInt(data.Policy.MonthlyQuota, 10)+" requests")
+					} else {
+						@fieldRow("Monthly Quota", "Unlimited")
+					}
+				</dl>
+			}
+		}
+		<!-- Key Lifecycle Card -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					<div class="flex h-10 w-10 items-center justify-center rounded-sm bg-primary/10 text-primary">
+						@icons.Clock(icons.WithSize(20))
+					</div>
+					<div>
+						@card.Title() {
+							Key Lifecycle
+						}
+						@card.Description() {
+							Key lifetime, rotation, and grace period settings.
+						}
+					</div>
+				</div>
+			}
+			@card.Content() {
+				@separator.Separator()
+				<dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+					@fieldRow("Max Key Lifetime", formatDuration(data.Policy.MaxKeyLifetime))
+					@fieldRow("Rotation Period", formatDuration(data.Policy.RotationPeriod))
+					@fieldRow("Grace Period", formatDuration(data.Policy.GracePeriod))
+				</dl>
+			}
+		}
+		<!-- Network Restrictions Card -->
+		if len(data.Policy.AllowedIPs) > 0 || len(data.Policy.AllowedOrigins) > 0 || len(data.Policy.AllowedMethods) > 0 || len(data.Policy.AllowedPaths) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					<div class="flex items-center gap-3">
+						<div class="flex h-10 w-10 items-center justify-center rounded-sm bg-primary/10 text-primary">
+							@icons.Globe(icons.WithSize(20))
+						</div>
+						<div>
+							@card.Title() {
+								Network Restrictions
+							}
+							@card.Description() {
+								IP, origin, method, and path restrictions.
+							}
+						</div>
+					</div>
+				}
+				@card.Content() {
+					@separator.Separator()
+					<dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+						if len(data.Policy.AllowedIPs) > 0 {
+							@fieldRow("Allowed IPs", joinStrings(data.Policy.AllowedIPs))
+						}
+						if len(data.Policy.AllowedOrigins) > 0 {
+							@fieldRow("Allowed Origins", joinStrings(data.Policy.AllowedOrigins))
+						}
+						if len(data.Policy.AllowedMethods) > 0 {
+							@fieldRow("Allowed Methods", joinStrings(data.Policy.AllowedMethods))
+						}
+						if len(data.Policy.AllowedPaths) > 0 {
+							@fieldRow("Allowed Paths", joinStrings(data.Policy.AllowedPaths))
+						}
+					</dl>
+				}
+			}
+		}
+		<!-- Allowed Scopes Card -->
+		if len(data.Policy.AllowedScopes) > 0 {
+			@card.Card(card.Props{Class: "rounded-sm"}) {
+				@card.Header() {
+					<div class="flex items-center gap-3">
+						@card.Title() {
+							Allowed Scopes
+						}
+						@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+							{ strconv.Itoa(len(data.Policy.AllowedScopes)) }
+						}
+					</div>
+				}
+				@card.Content() {
+					<div class="flex flex-wrap gap-2">
+						for _, s := range data.Policy.AllowedScopes {
+							@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+								{ s }
+							}
+						}
+					</div>
+				}
+			}
+		}
+		<!-- Keys Using This Policy -->
+		@card.Card(card.Props{Class: "rounded-sm"}) {
+			@card.Header() {
+				<div class="flex items-center gap-3">
+					@card.Title() {
+						Keys Using This Policy
+					}
+					@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+						{ strconv.Itoa(len(data.Keys)) }
+					}
+				</div>
+			}
+			@card.Content() {
+				if len(data.Keys) == 0 {
+					<p class="text-sm text-muted-foreground py-4 text-center">No keys are using this policy.</p>
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() {
+									Name
+								}
+								@table.Head() {
+									Hint
+								}
+								@table.Head() {
+									Environment
+								}
+								@table.Head() {
+									State
+								}
+							}
+						}
+						@table.Body() {
+							for _, k := range data.Keys {
+								<tr
+									class="border-b transition-colors hover:bg-muted/50 cursor-pointer"
+									hx-get={ "./keys/detail?key_id=" + k.ID.String() }
+									hx-target="#content"
+									hx-push-url="true"
+									hx-swap="innerHTML"
+								>
+									@table.Cell() {
+										<span class="font-medium">{ k.Name }</span>
+									}
+									@table.Cell() {
+										<code class="text-xs bg-muted px-1.5 py-0.5 rounded-sm">{ "****" + k.Hint }</code>
+									}
+									@table.Cell() {
+										@envBadge(k.Environment)
+									}
+									@table.Cell() {
+										@stateBadge(k.State)
+									}
+								</tr>
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}

@@ -5,16 +5,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
+	log "github.com/xraph/go-utils/log"
+
 	"github.com/xraph/forge"
+	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/vessel"
 
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/api"
+	ksdash "github.com/xraph/keysmith/dashboard"
 	"github.com/xraph/keysmith/plugin"
 	"github.com/xraph/keysmith/store"
 	mongostore "github.com/xraph/keysmith/store/mongo"
@@ -41,7 +44,7 @@ type Extension struct {
 	config       Config
 	eng          *keysmith.Engine
 	apiHandler   *api.API
-	logger       *slog.Logger
+	logger       log.Logger
 	keysmithOpts []keysmith.Option
 	exts         []plugin.Plugin
 	useGrove     bool
@@ -91,7 +94,10 @@ func (e *Extension) Register(fapp forge.App) error {
 func (e *Extension) init(fapp forge.App) error {
 	logger := e.logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = e.BaseExtension.Logger()
+	}
+	if logger == nil {
+		logger = log.NewNoopLogger()
 	}
 
 	// Resolve store from grove DI if configured.
@@ -105,6 +111,16 @@ func (e *Extension) init(fapp forge.App) error {
 			return err
 		}
 		e.keysmithOpts = append(e.keysmithOpts, keysmith.WithStore(s))
+	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
+		// Auto-discover default grove.DB from container (matches authsome/cortex pattern).
+		s, err := e.buildStoreFromGroveDB(db)
+		if err != nil {
+			return err
+		}
+		e.keysmithOpts = append(e.keysmithOpts, keysmith.WithStore(s))
+		e.Logger().Info("keysmith: auto-discovered grove.DB from container",
+			forge.F("driver", db.Driver().Name()),
+		)
 	}
 
 	opts := make([]keysmith.Option, 0, len(e.keysmithOpts)+1)
@@ -124,7 +140,11 @@ func (e *Extension) init(fapp forge.App) error {
 	e.apiHandler = api.New(e.eng, fapp.Router())
 
 	if !e.config.DisableRoutes {
-		e.apiHandler.RegisterRoutes(fapp.Router())
+		basePath := e.config.BasePath
+		if basePath == "" {
+			basePath = "/keysmith"
+		}
+		e.apiHandler.RegisterRoutes(fapp.Router().Group(basePath))
 	}
 
 	return nil
@@ -172,6 +192,17 @@ func (e *Extension) Handler() http.Handler {
 		return http.NotFoundHandler()
 	}
 	return e.apiHandler.Handler()
+}
+
+// DashboardContributor implements dashboard.DashboardAware. It returns a
+// LocalContributor that renders keysmith pages, widgets, and settings in the
+// Forge dashboard using templ + ForgeUI.
+func (e *Extension) DashboardContributor() contributor.LocalContributor {
+	return ksdash.New(
+		ksdash.NewManifest(e.exts),
+		e.eng,
+		e.exts,
+	)
 }
 
 // --- Config Loading (mirrors grove extension pattern) ---

@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/key"
@@ -24,7 +25,7 @@ type Engine struct {
 	generator   KeyGenerator
 	ratelimiter RateLimiter
 	hooks       *plugin.Manager
-	logger      *slog.Logger
+	logger      log.Logger
 }
 
 // NewEngine creates a new Keysmith engine with the given options.
@@ -33,7 +34,7 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		hasher:    DefaultHasher(),
 		generator: DefaultKeyGenerator(),
 		hooks:     plugin.NewManager(),
-		logger:    slog.Default(),
+		logger:    log.NewNoopLogger(),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -46,6 +47,11 @@ func NewEngine(opts ...Option) (*Engine, error) {
 
 // Store returns the underlying composite store.
 func (e *Engine) Store() store.Store { return e.store }
+
+// Health checks the health of the engine by pinging its store.
+func (e *Engine) Health(ctx context.Context) error {
+	return e.store.Ping(ctx)
+}
 
 // Start starts the engine and any background workers.
 func (e *Engine) Start(_ context.Context) error { return nil }
@@ -450,7 +456,7 @@ func (e *Engine) CleanupExpiredKeys(ctx context.Context) error {
 	}
 	for _, k := range keys {
 		if err := e.store.Keys().UpdateState(ctx, k.ID, key.StateExpired); err != nil {
-			e.logger.Warn("failed to expire key", "key_id", k.ID.String(), "error", err)
+			e.logger.Warn("failed to expire key", log.String("key_id", k.ID.String()), log.Any("error", err))
 			continue
 		}
 		_ = e.hooks.FireKeyExpired(ctx, k)
@@ -467,7 +473,7 @@ func (e *Engine) CleanupGraceExpired(ctx context.Context) error {
 	for _, rec := range recs {
 		if time.Now().After(rec.GraceEnds) {
 			if err := e.store.Keys().UpdateState(ctx, rec.KeyID, key.StateRevoked); err != nil {
-				e.logger.Warn("failed to revoke grace-expired key", "key_id", rec.KeyID.String(), "error", err)
+				e.logger.Warn("failed to revoke grace-expired key", log.String("key_id", rec.KeyID.String()), log.Any("error", err))
 			}
 		}
 	}
