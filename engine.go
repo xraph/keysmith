@@ -196,7 +196,7 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 	// Update last-used timestamp asynchronously.
 	go func() {
 		now := time.Now()
-		_ = e.store.Keys().UpdateLastUsed(context.Background(), k.ID, now)
+		_ = e.store.Keys().UpdateLastUsed(context.WithoutCancel(ctx), k.ID, now)
 	}()
 
 	_ = e.hooks.FireKeyValidated(ctx, k)
