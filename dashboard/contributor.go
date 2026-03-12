@@ -45,16 +45,16 @@ func (c *Contributor) Manifest() *contributor.Manifest { return c.manifest }
 
 // RenderPage renders a page for the given route.
 func (c *Contributor) RenderPage(ctx context.Context, route string, params contributor.Params) (templ.Component, error) {
-	// Check plugin-contributed pages first (DashboardPageContributor).
+	// Check plugin-contributed pages first (PageContributor).
 	for _, p := range c.plugins {
-		if dpc, ok := p.(DashboardPageContributor); ok {
+		if dpc, ok := p.(PageContributor); ok {
 			if comp, err := dpc.DashboardRenderPage(ctx, route, params); err == nil && comp != nil {
 				return comp, nil
 			}
 		}
 	}
 
-	// Check plugin-contributed pages (DashboardPlugin).
+	// Check plugin-contributed pages (Plugin).
 	for _, dp := range c.dashboardPlugins() {
 		for _, pp := range dp.DashboardPages() {
 			if pp.Route == route {
@@ -188,20 +188,20 @@ func (c *Contributor) renderKeyDetail(ctx context.Context, params contributor.Pa
 			if reason == "" {
 				reason = rotation.ReasonManual
 			}
-			if _, err := c.engine.RotateKey(ctx, keyID, reason); err != nil {
-				return nil, fmt.Errorf("dashboard: rotate key: %w", err)
+			if _, actionErr := c.engine.RotateKey(ctx, keyID, reason); actionErr != nil {
+				return nil, fmt.Errorf("dashboard: rotate key: %w", actionErr)
 			}
 		case "revoke":
-			if err := c.engine.RevokeKey(ctx, keyID, "Revoked via dashboard"); err != nil {
-				return nil, fmt.Errorf("dashboard: revoke key: %w", err)
+			if actionErr := c.engine.RevokeKey(ctx, keyID, "Revoked via dashboard"); actionErr != nil {
+				return nil, fmt.Errorf("dashboard: revoke key: %w", actionErr)
 			}
 		case "suspend":
-			if err := c.engine.SuspendKey(ctx, keyID); err != nil {
-				return nil, fmt.Errorf("dashboard: suspend key: %w", err)
+			if actionErr := c.engine.SuspendKey(ctx, keyID); actionErr != nil {
+				return nil, fmt.Errorf("dashboard: suspend key: %w", actionErr)
 			}
 		case "reactivate":
-			if err := c.engine.ReactivateKey(ctx, keyID); err != nil {
-				return nil, fmt.Errorf("dashboard: reactivate key: %w", err)
+			if actionErr := c.engine.ReactivateKey(ctx, keyID); actionErr != nil {
+				return nil, fmt.Errorf("dashboard: reactivate key: %w", actionErr)
 			}
 		}
 	}
@@ -398,12 +398,12 @@ func (c *Contributor) renderSettings(ctx context.Context) (templ.Component, erro
 func (c *Contributor) renderStatsWidget(ctx context.Context) (templ.Component, error) {
 	stats := fetchKeyStats(ctx, c.engine)
 	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
-		_, err := io.WriteString(w, fmt.Sprintf(
+		_, err := fmt.Fprintf(w,
 			`<div class="grid grid-cols-2 gap-4 p-4">`+
 				`<div class="space-y-1"><span class="text-sm text-muted-foreground">Total Keys</span><p class="text-2xl font-bold">%d</p></div>`+
 				`<div class="space-y-1"><span class="text-sm text-muted-foreground">Active</span><p class="text-2xl font-bold">%d</p></div>`+
 				`</div>`,
-			stats.Total, stats.Active))
+			stats.Total, stats.Active)
 		return err
 	}), nil
 }
@@ -417,12 +417,12 @@ func (c *Contributor) renderRecentKeysWidget(ctx context.Context) (templ.Compone
 		}
 		_, _ = io.WriteString(w, `<ul class="divide-y">`)
 		for _, k := range keys {
-			_, _ = io.WriteString(w, fmt.Sprintf(
+			_, _ = fmt.Fprintf(w,
 				`<li class="flex items-center justify-between px-4 py-2">`+
 					`<span class="text-sm font-medium">%s</span>`+
 					`<code class="text-xs bg-muted px-1.5 py-0.5 rounded-sm">****%s</code>`+
 					`</li>`,
-				k.Name, k.Hint))
+				k.Name, k.Hint)
 		}
 		_, err := io.WriteString(w, `</ul>`)
 		return err
@@ -432,19 +432,19 @@ func (c *Contributor) renderRecentKeysWidget(ctx context.Context) (templ.Compone
 func (c *Contributor) renderUsageSummaryWidget(ctx context.Context) (templ.Component, error) {
 	_, count, _ := fetchRecentUsage(ctx, c.engine, 1)
 	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
-		_, err := io.WriteString(w, fmt.Sprintf(
+		_, err := fmt.Fprintf(w,
 			`<div class="p-4 space-y-1">`+
 				`<span class="text-sm text-muted-foreground">Total Requests</span>`+
 				`<p class="text-2xl font-bold">%s</p>`+
 				`</div>`,
-			strconv.FormatInt(count, 10)))
+			strconv.FormatInt(count, 10))
 		return err
 	}), nil
 }
 
 // ─── Settings Render Helper ──────────────────────────────────────────────────
 
-func (c *Contributor) renderSettingsPanel(ctx context.Context) (templ.Component, error) {
+func (c *Contributor) renderSettingsPanel(_ context.Context) (templ.Component, error) {
 	pluginNames := make([]string, 0, len(c.plugins))
 	for _, p := range c.plugins {
 		pluginNames = append(pluginNames, p.Name())
@@ -457,11 +457,11 @@ func (c *Contributor) renderSettingsPanel(ctx context.Context) (templ.Component,
 
 // ─── Plugin Helpers ──────────────────────────────────────────────────────────
 
-// dashboardPlugins returns all registered plugins that implement DashboardPlugin.
-func (c *Contributor) dashboardPlugins() []DashboardPlugin {
-	var dps []DashboardPlugin
+// dashboardPlugins returns all registered plugins that implement Plugin.
+func (c *Contributor) dashboardPlugins() []Plugin {
+	var dps []Plugin
 	for _, p := range c.plugins {
-		if dp, ok := p.(DashboardPlugin); ok {
+		if dp, ok := p.(Plugin); ok {
 			dps = append(dps, dp)
 		}
 	}

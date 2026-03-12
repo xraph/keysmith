@@ -4,13 +4,14 @@ import (
 	"context"
 
 	"github.com/xraph/forge/extensions/dashboard/contributor"
+
 	"github.com/xraph/keysmith/dashboard/components"
 	"github.com/xraph/keysmith/plugin"
 )
 
 // NewManifest builds a contributor.Manifest for the keysmith dashboard.
 // It starts with the base nav items, widgets, and settings, then merges
-// any additional contributions from plugins implementing DashboardPlugin.
+// any additional contributions from plugins implementing dashboard.Plugin.
 func NewManifest(plugins []plugin.Plugin) *contributor.Manifest {
 	m := &contributor.Manifest{
 		Name:        "keysmith",
@@ -39,12 +40,12 @@ func NewManifest(plugins []plugin.Plugin) *contributor.Manifest {
 
 	// Merge plugin-contributed nav items and widgets.
 	for _, p := range plugins {
-		// DashboardPageContributor provides nav items for pages with route params.
-		if dpc, ok := p.(DashboardPageContributor); ok {
+		// PageContributor provides nav items for pages with route params.
+		if dpc, ok := p.(PageContributor); ok {
 			m.Nav = append(m.Nav, dpc.DashboardNavItems()...)
 		}
 
-		dp, ok := p.(DashboardPlugin)
+		dp, ok := p.(Plugin)
 		if !ok {
 			continue
 		}

@@ -5,6 +5,7 @@ package audithook
 import (
 	"context"
 	"fmt"
+
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/keysmith/id"

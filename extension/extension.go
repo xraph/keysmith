@@ -94,7 +94,7 @@ func (e *Extension) Register(fapp forge.App) error {
 func (e *Extension) init(fapp forge.App) error {
 	logger := e.logger
 	if logger == nil {
-		logger = e.BaseExtension.Logger()
+		logger = e.Logger()
 	}
 	if logger == nil {
 		logger = log.NewNoopLogger()

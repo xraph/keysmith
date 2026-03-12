@@ -5,6 +5,7 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/xraph/forge/extensions/dashboard/contributor"
+
 	"github.com/xraph/keysmith/id"
 )
 
@@ -25,9 +26,9 @@ type PluginPage struct {
 	Render func(ctx context.Context) templ.Component
 }
 
-// DashboardPlugin is the interface for keysmith plugins that contribute
+// Plugin is the interface for keysmith plugins that contribute
 // dashboard UI elements (widgets, pages, settings panels).
-type DashboardPlugin interface {
+type Plugin interface {
 	DashboardWidgets(ctx context.Context) []PluginWidget
 	DashboardSettingsPanel(ctx context.Context) templ.Component
 	DashboardPages() []PluginPage
@@ -39,9 +40,9 @@ type KeyDetailContributor interface {
 	DashboardKeyDetailSection(ctx context.Context, keyID id.KeyID) templ.Component
 }
 
-// DashboardPageContributor is the interface for plugins that contribute
+// PageContributor is the interface for plugins that contribute
 // parameterized page routes with full control over rendering.
-type DashboardPageContributor interface {
+type PageContributor interface {
 	DashboardNavItems() []contributor.NavItem
 	DashboardRenderPage(ctx context.Context, route string, params contributor.Params) (templ.Component, error)
 }
