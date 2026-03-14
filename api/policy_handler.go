@@ -39,7 +39,7 @@ func (a *API) createPolicy(ctx forge.Context, req *CreatePolicyRequest) (*Policy
 	return resp, ctx.JSON(http.StatusCreated, resp)
 }
 
-func (a *API) getPolicy(ctx forge.Context, _ *ListPoliciesRequest) (*PolicyResponse, error) {
+func (a *API) getPolicy(ctx forge.Context, _ *GetPolicyRequest) (*PolicyResponse, error) {
 	polID, err := id.ParsePolicyID(ctx.Param("policyId"))
 	if err != nil {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid policy ID: %v", err))
@@ -104,7 +104,7 @@ func (a *API) updatePolicy(ctx forge.Context, req *UpdatePolicyRequest) (*Policy
 	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
-func (a *API) deletePolicy(ctx forge.Context, _ *ListPoliciesRequest) (*struct{}, error) {
+func (a *API) deletePolicy(ctx forge.Context, _ *DeletePolicyRequest) (*struct{}, error) {
 	polID, err := id.ParsePolicyID(ctx.Param("policyId"))
 	if err != nil {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid policy ID: %v", err))

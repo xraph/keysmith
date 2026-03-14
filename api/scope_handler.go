@@ -45,7 +45,7 @@ func (a *API) listScopes(ctx forge.Context, req *ListScopesRequest) ([]*ScopeRes
 	return resp, ctx.JSON(http.StatusOK, resp)
 }
 
-func (a *API) deleteScope(ctx forge.Context, _ *ListScopesRequest) (*struct{}, error) {
+func (a *API) deleteScope(ctx forge.Context, _ *DeleteScopeRequest) (*struct{}, error) {
 	scopeID, err := id.ParseScopeID(ctx.Param("scopeId"))
 	if err != nil {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid scope ID: %v", err))

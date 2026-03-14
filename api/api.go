@@ -65,6 +65,7 @@ func (a *API) registerKeyRoutes(router forge.Router) {
 		forge.WithSummary("Get API key"),
 		forge.WithDescription("Returns details of a specific API key."),
 		forge.WithOperationID("getKey"),
+		forge.WithRequestSchema(GetKeyRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Key details", &KeyResponse{}),
 		forge.WithErrorResponses(),
 	)
@@ -73,6 +74,7 @@ func (a *API) registerKeyRoutes(router forge.Router) {
 		forge.WithSummary("Delete API key"),
 		forge.WithDescription("Permanently deletes an API key."),
 		forge.WithOperationID("deleteKey"),
+		forge.WithRequestSchema(DeleteKeyRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	)
@@ -99,6 +101,7 @@ func (a *API) registerKeyRoutes(router forge.Router) {
 		forge.WithSummary("Suspend API key"),
 		forge.WithDescription("Temporarily suspends an API key."),
 		forge.WithOperationID("suspendKey"),
+		forge.WithRequestSchema(SuspendKeyRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	)
@@ -107,6 +110,7 @@ func (a *API) registerKeyRoutes(router forge.Router) {
 		forge.WithSummary("Reactivate API key"),
 		forge.WithDescription("Reactivates a suspended API key."),
 		forge.WithOperationID("reactivateKey"),
+		forge.WithRequestSchema(ReactivateKeyRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	)
@@ -118,7 +122,7 @@ func (a *API) registerPolicyRoutes(router forge.Router) {
 	_ = g.POST("/policies", a.createPolicy,
 		forge.WithSummary("Create policy"),
 		forge.WithDescription("Creates a new key policy with rate limits, scopes, and restrictions."),
-		forge.WithOperationID("createPolicy"),
+		forge.WithOperationID("keysmithCreatePolicy"),
 		forge.WithRequestSchema(CreatePolicyRequest{}),
 		forge.WithResponseSchema(http.StatusCreated, "Created policy", &PolicyResponse{}),
 		forge.WithErrorResponses(),
@@ -127,7 +131,7 @@ func (a *API) registerPolicyRoutes(router forge.Router) {
 	_ = g.GET("/policies", a.listPolicies,
 		forge.WithSummary("List policies"),
 		forge.WithDescription("Returns key policies for the current tenant."),
-		forge.WithOperationID("listPolicies"),
+		forge.WithOperationID("keysmithListPolicies"),
 		forge.WithRequestSchema(ListPoliciesRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Policy list", []*PolicyResponse{}),
 		forge.WithErrorResponses(),
@@ -136,7 +140,8 @@ func (a *API) registerPolicyRoutes(router forge.Router) {
 	_ = g.GET("/policies/:policyId", a.getPolicy,
 		forge.WithSummary("Get policy"),
 		forge.WithDescription("Returns details of a specific key policy."),
-		forge.WithOperationID("getPolicy"),
+		forge.WithOperationID("keysmithGetPolicy"),
+		forge.WithRequestSchema(GetPolicyRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Policy details", &PolicyResponse{}),
 		forge.WithErrorResponses(),
 	)
@@ -144,7 +149,7 @@ func (a *API) registerPolicyRoutes(router forge.Router) {
 	_ = g.PUT("/policies/:policyId", a.updatePolicy,
 		forge.WithSummary("Update policy"),
 		forge.WithDescription("Updates an existing key policy."),
-		forge.WithOperationID("updatePolicy"),
+		forge.WithOperationID("keysmithUpdatePolicy"),
 		forge.WithRequestSchema(UpdatePolicyRequest{}),
 		forge.WithResponseSchema(http.StatusOK, "Updated policy", &PolicyResponse{}),
 		forge.WithErrorResponses(),
@@ -153,7 +158,8 @@ func (a *API) registerPolicyRoutes(router forge.Router) {
 	_ = g.DELETE("/policies/:policyId", a.deletePolicy,
 		forge.WithSummary("Delete policy"),
 		forge.WithDescription("Deletes a key policy. Fails if keys are assigned to it."),
-		forge.WithOperationID("deletePolicy"),
+		forge.WithOperationID("keysmithDeletePolicy"),
+		forge.WithRequestSchema(DeletePolicyRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	)
@@ -184,6 +190,7 @@ func (a *API) registerScopeRoutes(router forge.Router) {
 		forge.WithSummary("Delete scope"),
 		forge.WithDescription("Deletes a permission scope."),
 		forge.WithOperationID("deleteScope"),
+		forge.WithRequestSchema(DeleteScopeRequest{}),
 		forge.WithNoContentResponse(),
 		forge.WithErrorResponses(),
 	)

@@ -52,6 +52,16 @@ type ValidateKeyRequest struct {
 	RawKey string `json:"raw_key" description:"The raw API key to validate"`
 }
 
+// SuspendKeyRequest is the request for suspending a key.
+type SuspendKeyRequest struct {
+	KeyID string `path:"keyId" description:"Key ID"`
+}
+
+// ReactivateKeyRequest is the request for reactivating a key.
+type ReactivateKeyRequest struct {
+	KeyID string `path:"keyId" description:"Key ID"`
+}
+
 // ── Policy DTOs ───────────────────────────────────
 
 // CreatePolicyRequest is the request for creating a policy.
@@ -83,6 +93,16 @@ type ListPoliciesRequest struct {
 	Offset int `query:"offset" description:"Number of results to skip"`
 }
 
+// GetPolicyRequest is the request for fetching a single policy.
+type GetPolicyRequest struct {
+	PolicyID string `path:"policyId" description:"Policy ID"`
+}
+
+// DeletePolicyRequest is the request for deleting a policy.
+type DeletePolicyRequest struct {
+	PolicyID string `path:"policyId" description:"Policy ID"`
+}
+
 // ── Scope DTOs ────────────────────────────────────
 
 // CreateScopeRequest is the request for creating a scope.
@@ -97,6 +117,11 @@ type ListScopesRequest struct {
 	Parent string `query:"parent" description:"Filter by parent scope"`
 	Limit  int    `query:"limit" description:"Max results (default: 50)"`
 	Offset int    `query:"offset" description:"Number of results to skip"`
+}
+
+// DeleteScopeRequest is the request for deleting a scope.
+type DeleteScopeRequest struct {
+	ScopeID string `path:"scopeId" description:"Scope ID"`
 }
 
 // AssignScopesRequest is the request for assigning scopes to a key.

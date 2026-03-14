@@ -120,7 +120,7 @@ func (a *API) revokeKey(ctx forge.Context, req *RevokeKeyRequest) (*struct{}, er
 	return nil, ctx.NoContent(http.StatusNoContent)
 }
 
-func (a *API) suspendKey(ctx forge.Context, _ *GetKeyRequest) (*struct{}, error) {
+func (a *API) suspendKey(ctx forge.Context, _ *SuspendKeyRequest) (*struct{}, error) {
 	keyID, err := id.ParseKeyID(ctx.Param("keyId"))
 	if err != nil {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid key ID: %v", err))
@@ -133,7 +133,7 @@ func (a *API) suspendKey(ctx forge.Context, _ *GetKeyRequest) (*struct{}, error)
 	return nil, ctx.NoContent(http.StatusNoContent)
 }
 
-func (a *API) reactivateKey(ctx forge.Context, _ *GetKeyRequest) (*struct{}, error) {
+func (a *API) reactivateKey(ctx forge.Context, _ *ReactivateKeyRequest) (*struct{}, error) {
 	keyID, err := id.ParseKeyID(ctx.Param("keyId"))
 	if err != nil {
 		return nil, forge.BadRequest(fmt.Sprintf("invalid key ID: %v", err))
