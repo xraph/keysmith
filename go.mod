@@ -3,8 +3,8 @@ module github.com/xraph/keysmith
 go 1.26.0
 
 require (
-	github.com/a-h/templ v0.3.1001
-	github.com/stretchr/testify v1.11.1
+	github.com/a-h/templ v0.3.1020
+	github.com/stretchr/testify v1.12.1
 	github.com/xraph/forge v1.9.10
 	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.1.6
@@ -14,7 +14,7 @@ require (
 	github.com/xraph/grove/drivers/sqlitedriver v1.6.2
 	github.com/xraph/vessel v1.0.4
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
-	go.mongodb.org/mongo-driver/v2 v2.5.0
+	go.mongodb.org/mongo-driver/v2 v2.8.0
 )
 
 require (
@@ -80,7 +80,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.24.1 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
