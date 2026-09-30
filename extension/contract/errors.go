@@ -47,7 +47,7 @@ func mapError(err error) error {
 // Error level with the intent that hit it. That is the only case an
 // operator cannot diagnose from what the client sees. The client still gets
 // only the generic message.
-func (d Deps) mapError(intent string, err error) error { //nolint:unused // used by the handlers added in the next task
+func (d Deps) mapError(intent string, err error) error {
 	mapped := mapError(err)
 	if d.Logger == nil || mapped == nil {
 		return mapped

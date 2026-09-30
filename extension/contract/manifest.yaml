@@ -1,0 +1,22 @@
+schemaVersion: 1
+contributor:
+  name: keysmith
+  envelope:
+    supports: [v1]
+    preferred: v1
+  capabilities: [keysmith.read, keysmith.write]
+
+# No app block and no graph: the React plugin owns routes. Every intent is
+# answered for the tenant tenantFrom resolves; no request field names a
+# tenant, and no response ever carries a raw key or a key hash.
+intents:
+  - { name: keys.list,   kind: query, version: 1, capability: read }
+  - { name: keys.detail, kind: query, version: 1, capability: read }
+
+queries:
+  keysList:
+    intent: keys.list
+    cache: { staleTime: 30s }
+  keyDetail:
+    intent: keys.detail
+    cache: { staleTime: 30s }
