@@ -115,16 +115,16 @@ type policyModel struct {
 	Name            string         `grove:"name"                bson:"name"`
 	Description     string         `grove:"description"         bson:"description"`
 	RateLimit       int            `grove:"rate_limit"          bson:"rate_limit"`
-	RateLimitWindow int64          `grove:"rate_limit_window"   bson:"rate_limit_window_ms"`
+	RateLimitWindow int64          `grove:"rate_limit_window"   bson:"rate_limit_window"`
 	BurstLimit      int            `grove:"burst_limit"         bson:"burst_limit"`
 	AllowedScopes   []string       `grove:"allowed_scopes"      bson:"allowed_scopes"`
 	AllowedIPs      []string       `grove:"allowed_ips"         bson:"allowed_ips"`
 	AllowedOrigins  []string       `grove:"allowed_origins"     bson:"allowed_origins"`
 	AllowedMethods  []string       `grove:"allowed_methods"     bson:"allowed_methods"`
 	AllowedPaths    []string       `grove:"allowed_paths"       bson:"allowed_paths"`
-	MaxKeyLifetime  int64          `grove:"max_key_lifetime"    bson:"max_key_lifetime_ms"`
-	RotationPeriod  int64          `grove:"rotation_period"     bson:"rotation_period_ms"`
-	GracePeriod     int64          `grove:"grace_period"        bson:"grace_period_ms"`
+	MaxKeyLifetime  int64          `grove:"max_key_lifetime"    bson:"max_key_lifetime"`
+	RotationPeriod  int64          `grove:"rotation_period"     bson:"rotation_period"`
+	GracePeriod     int64          `grove:"grace_period"        bson:"grace_period"`
 	DailyQuota      int64          `grove:"daily_quota"         bson:"daily_quota"`
 	MonthlyQuota    int64          `grove:"monthly_quota"       bson:"monthly_quota"`
 	Metadata        map[string]any `grove:"metadata"            bson:"metadata,omitempty"`
