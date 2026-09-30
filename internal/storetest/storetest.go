@@ -79,10 +79,11 @@ func suffix() string {
 }
 
 // replaceDB swaps the database name in a postgres:// DSN.
-func replaceDB(dsn, name string) string {
+func replaceDB(t *testing.T, dsn, name string) string {
+	t.Helper()
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return dsn
+		t.Fatalf("parse postgres DSN: %v", err)
 	}
 	u.Path = "/" + name
 	return u.String()
@@ -116,7 +117,7 @@ func openPostgres(t *testing.T, dsn string) store.Store {
 		t.Fatalf("create database: %v", err)
 	}
 	db := pgdriver.New()
-	if err := db.Open(ctx, replaceDB(dsn, name)); err != nil {
+	if err := db.Open(ctx, replaceDB(t, dsn, name)); err != nil {
 		t.Fatalf("postgres open: %v", err)
 	}
 	t.Cleanup(func() {
