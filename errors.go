@@ -1,6 +1,10 @@
 package keysmith
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/xraph/keysmith/store"
+)
 
 var (
 	// ErrInvalidKey is returned when the provided API key is not valid.
@@ -31,13 +35,13 @@ var (
 	ErrPolicyInUse = errors.New("keysmith: policy is assigned to active keys")
 
 	// ErrPolicyNotFound is returned when a policy cannot be found.
-	ErrPolicyNotFound = errors.New("keysmith: policy not found")
+	ErrPolicyNotFound = store.ErrPolicyNotFound
 
 	// ErrKeyNotFound is returned when a key cannot be found.
-	ErrKeyNotFound = errors.New("keysmith: key not found")
+	ErrKeyNotFound = store.ErrKeyNotFound
 
 	// ErrScopeNotFound is returned when a scope cannot be found.
-	ErrScopeNotFound = errors.New("keysmith: scope not found")
+	ErrScopeNotFound = store.ErrScopeNotFound
 
 	// ErrScopeNotAllowed is returned when a scope is not permitted by the policy.
 	ErrScopeNotAllowed = errors.New("keysmith: scope not allowed by policy")
@@ -49,5 +53,5 @@ var (
 	ErrOriginNotAllowed = errors.New("keysmith: origin not allowed")
 
 	// ErrRotationNotFound is returned when a rotation record cannot be found.
-	ErrRotationNotFound = errors.New("keysmith: rotation record not found")
+	ErrRotationNotFound = store.ErrRotationNotFound
 )

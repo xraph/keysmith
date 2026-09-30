@@ -81,11 +81,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-type notFoundError struct{ entity string }
-
-func (e *notFoundError) Error() string { return e.entity + " not found" }
-
-func errNotFound(entity string) error { return &notFoundError{entity: entity} }
+func errNotFound(entity string) error { return store.NotFound(entity) }
 
 // isNoRows checks for the standard sql.ErrNoRows sentinel.
 func isNoRows(err error) bool {

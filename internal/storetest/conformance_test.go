@@ -89,3 +89,19 @@ func keyIDs(ks []*key.Key) []string {
 	}
 	return out
 }
+
+func TestNotFoundIsASentinel(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		_, err := s.Keys().Get(ctx, id.NewKeyID())
+		assert.ErrorIs(t, err, store.ErrKeyNotFound)
+		_, err = s.Keys().GetByHash(ctx, "nope")
+		assert.ErrorIs(t, err, store.ErrKeyNotFound)
+		_, err = s.Policies().Get(ctx, id.NewPolicyID())
+		assert.ErrorIs(t, err, store.ErrPolicyNotFound)
+		_, err = s.Scopes().GetByName(ctx, "t1", "nope")
+		assert.ErrorIs(t, err, store.ErrScopeNotFound)
+		_, err = s.Rotations().LatestForKey(ctx, id.NewKeyID())
+		assert.ErrorIs(t, err, store.ErrRotationNotFound)
+	})
+}

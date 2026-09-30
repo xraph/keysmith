@@ -774,11 +774,7 @@ func (s *scopeStore) RemoveFromKey(_ context.Context, keyID id.KeyID, scopeNames
 // Helpers
 // ══════════════════════════════════════════════════
 
-type notFoundError struct{ entity string }
-
-func (e *notFoundError) Error() string { return e.entity + " not found" }
-
-func errNotFound(entity string) error { return &notFoundError{entity: entity} }
+func errNotFound(entity string) error { return store.NotFound(entity) }
 
 func applyPagination[T any](items []*T, offset, limit int) []*T {
 	if offset > len(items) {

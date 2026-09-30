@@ -1,10 +1,8 @@
 package postgres
 
-type notFoundError struct{ entity string }
+import "github.com/xraph/keysmith/store"
 
-func (e *notFoundError) Error() string { return e.entity + " not found" }
-
-func errNotFound(entity string) error { return &notFoundError{entity: entity} }
+func errNotFound(entity string) error { return store.NotFound(entity) }
 
 // jsonbObject guarantees a non-nil map so an empty jsonb object ('{}') is
 // stored instead of SQL NULL. The keysmith_* tables declare jsonb columns as

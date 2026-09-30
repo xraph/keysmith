@@ -95,11 +95,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-type notFoundError struct{ entity string }
-
-func (e *notFoundError) Error() string { return e.entity + " not found" }
-
-func errNotFound(entity string) error { return &notFoundError{entity: entity} }
+func errNotFound(entity string) error { return store.NotFound(entity) }
 
 // isNoDocuments checks if an error wraps mongo.ErrNoDocuments.
 func isNoDocuments(err error) bool {
