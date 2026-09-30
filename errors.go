@@ -43,6 +43,10 @@ var (
 	// ErrScopeNotFound is returned when a scope cannot be found.
 	ErrScopeNotFound = store.ErrScopeNotFound
 
+	// ErrKeyLifetimeExceeded is returned when a key is created with an expiry
+	// further out than its policy's MaxKeyLifetime allows.
+	ErrKeyLifetimeExceeded = errors.New("keysmith: expiry is beyond the policy's maximum key lifetime")
+
 	// ErrScopeNotAllowed is returned when a scope is not permitted by the policy.
 	ErrScopeNotAllowed = errors.New("keysmith: scope not allowed by policy")
 

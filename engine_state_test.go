@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
 	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/policy"
 	"github.com/xraph/keysmith/rotation"
 	"github.com/xraph/keysmith/store"
 	"github.com/xraph/keysmith/store/memory"
@@ -117,5 +118,36 @@ func TestRevokedAtWinsOverAStaleState(t *testing.T) {
 		assert.ErrorIs(t, eng.ReactivateKey(ctx, r.Key.ID), keysmith.ErrInvalidStateTransition)
 		_, err = eng.RotateKey(ctx, r.Key.ID, rotation.ReasonManual)
 		assert.ErrorIs(t, err, keysmith.ErrInvalidStateTransition)
+	})
+}
+
+// MaxKeyLifetime is a cap, not only a default: an explicit expiry beyond it
+// is refused before anything is written.
+func TestMaxKeyLifetimeCapsAnExplicitExpiry(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		pol := &policy.Policy{Name: "short", MaxKeyLifetime: 24 * time.Hour}
+		require.NoError(t, eng.CreatePolicy(ctx, pol))
+		in := func(name string, exp *time.Time) *keysmith.CreateKeyInput {
+			return &keysmith.CreateKeyInput{Name: name, Prefix: "sk", Environment: key.EnvLive, PolicyID: &pol.ID, ExpiresAt: exp}
+		}
+
+		tooFar := time.Now().Add(48 * time.Hour)
+		_, err := eng.CreateKey(ctx, in("far", &tooFar))
+		require.ErrorIs(t, err, keysmith.ErrKeyLifetimeExceeded)
+		keys, err := eng.ListKeys(ctx, &key.ListFilter{PolicyID: &pol.ID})
+		require.NoError(t, err)
+		assert.Empty(t, keys, "a refused create writes no key")
+
+		near := time.Now().Add(12 * time.Hour)
+		r, err := eng.CreateKey(ctx, in("near", &near))
+		require.NoError(t, err)
+		require.NotNil(t, r.Key.ExpiresAt)
+		assert.WithinDuration(t, near, *r.Key.ExpiresAt, time.Second)
+
+		r, err = eng.CreateKey(ctx, in("default", nil))
+		require.NoError(t, err)
+		require.NotNil(t, r.Key.ExpiresAt)
+		assert.WithinDuration(t, time.Now().Add(24*time.Hour), *r.Key.ExpiresAt, 5*time.Second)
 	})
 }

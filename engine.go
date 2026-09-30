@@ -88,6 +88,14 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 		}
 	}
 
+	// MaxKeyLifetime is a cap. An explicit expiry beyond it is refused
+	// before anything is written; no expiry defaults to the cap below.
+	now := time.Now()
+	if pol != nil && pol.MaxKeyLifetime > 0 && input.ExpiresAt != nil &&
+		input.ExpiresAt.After(now.Add(pol.MaxKeyLifetime)) {
+		return nil, ErrKeyLifetimeExceeded
+	}
+
 	rawKey, err := e.generator.Generate(input.Prefix, input.Environment)
 	if err != nil {
 		return nil, fmt.Errorf("generate key: %w", err)
@@ -98,7 +106,6 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 		return nil, fmt.Errorf("hash key: %w", err)
 	}
 
-	now := time.Now()
 	k := &key.Key{
 		ID:          id.NewKeyID(),
 		TenantID:    tenantID,

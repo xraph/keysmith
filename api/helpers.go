@@ -23,6 +23,8 @@ func mapStoreError(err error) error {
 		return forge.NotFound(err.Error())
 	case errors.Is(err, keysmith.ErrInvalidKey):
 		return forge.Unauthorized(err.Error())
+	case errors.Is(err, keysmith.ErrKeyLifetimeExceeded):
+		return forge.BadRequest(err.Error())
 	case errors.Is(err, keysmith.ErrKeyExpired),
 		errors.Is(err, keysmith.ErrKeyRevoked),
 		errors.Is(err, keysmith.ErrKeySuspended),
