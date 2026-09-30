@@ -27,4 +27,12 @@ type ValidationResult struct {
 	Key    *key.Key       `json:"key"`
 	Scopes []string       `json:"scopes"`
 	Policy *policy.Policy `json:"policy,omitempty"`
+
+	// ViaPreviousKey is true when the caller presented a key that has since
+	// been rotated and is still inside its grace window. A host can use it
+	// to warn the caller to switch to the new key.
+	ViaPreviousKey bool `json:"via_previous_key,omitempty"`
+	// GraceEnds is when the previous key stops validating. It is set only
+	// when ViaPreviousKey is true.
+	GraceEnds *time.Time `json:"grace_ends,omitempty"`
 }

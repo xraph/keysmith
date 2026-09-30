@@ -151,14 +151,30 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 		return nil, fmt.Errorf("hash key: %w", err)
 	}
 
+	var viaPrevious bool
+	var graceEnds *time.Time
 	k, err := e.store.Keys().GetByHash(ctx, hash)
 	if err != nil {
-		_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, err)
-		return nil, ErrInvalidKey
+		// The hash is not any key's current hash. It may still be the hash a
+		// key had before a rotation whose grace window is open.
+		rec, recErr := e.store.Rotations().GetInGraceByOldHash(ctx, hash, time.Now())
+		if recErr != nil {
+			_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, err)
+			return nil, ErrInvalidKey
+		}
+		k, err = e.store.Keys().Get(ctx, rec.KeyID)
+		if err != nil {
+			_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, err)
+			return nil, ErrInvalidKey
+		}
+		viaPrevious = true
+		ends := rec.GraceEnds
+		graceEnds = &ends
 	}
 
-	// Check state.
-	if k.State != key.StateActive && k.State != key.StateRotated {
+	// Check state. Suspended, revoked and expired keys fail here whichever
+	// hash the caller presented.
+	if k.State != key.StateActive {
 		_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, ErrKeyInactive)
 		return nil, ErrKeyInactive
 	}
@@ -168,15 +184,6 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 		_ = e.store.Keys().UpdateState(ctx, k.ID, key.StateExpired)
 		_ = e.hooks.FireKeyExpired(ctx, k)
 		return nil, ErrKeyExpired
-	}
-
-	// Check grace period for rotated keys.
-	if k.State == key.StateRotated {
-		latest, rotErr := e.store.Rotations().LatestForKey(ctx, k.ID)
-		if rotErr == nil && time.Now().After(latest.GraceEnds) {
-			_ = e.store.Keys().UpdateState(ctx, k.ID, key.StateRevoked)
-			return nil, ErrKeyRevoked
-		}
 	}
 
 	// Load policy for rate-limiting.
@@ -210,23 +217,40 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 	_ = e.hooks.FireKeyValidated(ctx, k)
 
 	return &ValidationResult{
-		Key:    k,
-		Scopes: scopeNames,
-		Policy: pol,
+		Key:            k,
+		Scopes:         scopeNames,
+		Policy:         pol,
+		ViaPreviousKey: viaPrevious,
+		GraceEnds:      graceEnds,
 	}, nil
 }
 
-// RotateKey creates a new key for the same key record, depreciates the old one
-// with a grace period, and returns the new raw key.
-func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason) (*key.CreateResult, error) {
+// RotateKey issues a new raw key for the same key record. The previous raw key
+// keeps validating until its grace window ends. The window comes from
+// WithGrace if given, else the key's policy GracePeriod, else 24 hours. A
+// window of zero stops the previous key at once. A revoked or expired key
+// cannot be rotated.
+func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, opts ...RotateOption) (*key.CreateResult, error) {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("get key: %w", err)
 	}
+	if k.State == key.StateRevoked || k.State == key.StateExpired ||
+		(k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt)) {
+		return nil, ErrInvalidStateTransition
+	}
 
-	// Determine grace period from policy or default.
+	var cfg rotateConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	// Grace period: the caller's choice, then the policy's, then 24 hours.
 	graceTTL := 24 * time.Hour
-	if k.PolicyID != nil {
+	switch {
+	case cfg.grace != nil:
+		graceTTL = *cfg.grace
+	case k.PolicyID != nil:
 		pol, polErr := e.store.Policies().Get(ctx, *k.PolicyID)
 		if polErr == nil && pol.GracePeriod > 0 {
 			graceTTL = pol.GracePeriod
@@ -245,6 +269,7 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	}
 
 	oldHash := k.KeyHash
+	oldHint := k.Hint
 	now := time.Now()
 
 	// Update the key record with the new hash.
@@ -264,6 +289,9 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 		TenantID:   k.TenantID,
 		OldKeyHash: oldHash,
 		NewKeyHash: newHash,
+		OldHint:    oldHint,
+		NewHint:    k.Hint,
+		RotatedBy:  cfg.rotatedBy,
 		Reason:     reason,
 		GraceTTL:   graceTTL,
 		GraceEnds:  now.Add(graceTTL),
@@ -298,8 +326,26 @@ func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) e
 		return fmt.Errorf("update key: %w", err)
 	}
 
+	// A revoked key must not be reachable through a previous key either.
+	if _, err := e.store.Rotations().EndGrace(ctx, keyID, now); err != nil {
+		return fmt.Errorf("end grace: %w", err)
+	}
+
 	_ = e.hooks.FireKeyRevoked(ctx, k, reason)
 	return nil
+}
+
+// EndGrace closes every open grace window on a key now, so every previous
+// key stops validating. It returns how many windows it closed.
+func (e *Engine) EndGrace(ctx context.Context, keyID id.KeyID) (int64, error) {
+	if _, err := e.store.Keys().Get(ctx, keyID); err != nil {
+		return 0, fmt.Errorf("get key: %w", err)
+	}
+	n, err := e.store.Rotations().EndGrace(ctx, keyID, time.Now())
+	if err != nil {
+		return 0, fmt.Errorf("end grace: %w", err)
+	}
+	return n, nil
 }
 
 // SuspendKey temporarily disables an active key. Only an active key can be
@@ -515,22 +561,6 @@ func (e *Engine) CleanupExpiredKeys(ctx context.Context) error {
 			continue
 		}
 		_ = e.hooks.FireKeyExpired(ctx, k)
-	}
-	return nil
-}
-
-// CleanupGraceExpired revokes keys whose grace period has ended.
-func (e *Engine) CleanupGraceExpired(ctx context.Context) error {
-	recs, err := e.store.Rotations().ListPendingGrace(ctx, time.Now())
-	if err != nil {
-		return fmt.Errorf("list pending grace: %w", err)
-	}
-	for _, rec := range recs {
-		if time.Now().After(rec.GraceEnds) {
-			if err := e.store.Keys().UpdateState(ctx, rec.KeyID, key.StateRevoked); err != nil {
-				e.logger.Warn("failed to revoke grace-expired key", log.String("key_id", rec.KeyID.String()), log.Any("error", err))
-			}
-		}
 	}
 	return nil
 }

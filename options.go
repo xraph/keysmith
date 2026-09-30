@@ -1,6 +1,8 @@
 package keysmith
 
 import (
+	"time"
+
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/keysmith/plugin"
@@ -27,3 +29,28 @@ func WithExtension(x plugin.Plugin) Option { return func(e *Engine) { e.hooks.Re
 
 // WithLogger sets the logger.
 func WithLogger(l log.Logger) Option { return func(e *Engine) { e.logger = l } }
+
+type rotateConfig struct {
+	grace     *time.Duration
+	rotatedBy string
+}
+
+// RotateOption customises one call to RotateKey.
+type RotateOption func(*rotateConfig)
+
+// WithGrace sets how long the previous key keeps validating. Zero means it
+// stops the moment the rotation is recorded, which is what a compromise
+// rotation wants. A negative value is treated as zero.
+func WithGrace(d time.Duration) RotateOption {
+	return func(c *rotateConfig) {
+		if d < 0 {
+			d = 0
+		}
+		c.grace = &d
+	}
+}
+
+// WithRotatedBy records who rotated the key.
+func WithRotatedBy(subject string) RotateOption {
+	return func(c *rotateConfig) { c.rotatedBy = subject }
+}

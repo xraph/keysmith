@@ -164,9 +164,19 @@ func TestRotateKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, original.Key.ID.String(), vr.Key.ID.String())
 
-	// Old key should fail.
-	_, err = eng.ValidateKey(ctx, original.RawKey)
+	// The previous key keeps validating inside the default grace window.
+	vr, err = eng.ValidateKey(ctx, original.RawKey)
+	require.NoError(t, err)
+	assert.True(t, vr.ViaPreviousKey)
+
+	// A zero-grace rotation stops the key it replaces at once. The first
+	// raw key is still inside the window its own rotation opened.
+	latest, err := eng.RotateKey(ctx, original.Key.ID, rotation.ReasonManual, keysmith.WithGrace(0))
+	require.NoError(t, err)
+	_, err = eng.ValidateKey(ctx, rotated.RawKey)
 	assert.ErrorIs(t, err, keysmith.ErrInvalidKey)
+	_, err = eng.ValidateKey(ctx, latest.RawKey)
+	assert.NoError(t, err)
 }
 
 func TestExpiredKey(t *testing.T) {

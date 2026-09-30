@@ -14,7 +14,10 @@ const (
 	// StateActive indicates the key is valid and usable.
 	StateActive State = "active"
 
-	// StateRotated indicates the old key after rotation; grace period applies.
+	// StateRotated is never assigned by the engine: rotation keeps the key
+	// active and tracks the previous hash's grace window in the rotation
+	// record. The constant is kept for compatibility with stored data and
+	// callers that still reference it.
 	StateRotated State = "rotated"
 
 	// StateExpired indicates the key has passed its expiration time.
