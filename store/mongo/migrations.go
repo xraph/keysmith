@@ -252,5 +252,21 @@ func init() {
 				return err
 			},
 		},
+		// Usage is aggregated from keysmith_usage now, so the aggregate
+		// collection nothing ever wrote to can go.
+		&migrate.Migration{
+			Name:    "drop_keysmith_usage_agg",
+			Version: "20260930000002",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				return mexec.DropCollection(ctx, (*usageAggModel)(nil))
+			},
+			// Nothing ever wrote to the collection, so there is nothing to
+			// restore.
+			Down: func(context.Context, migrate.Executor) error { return nil },
+		},
 	)
 }

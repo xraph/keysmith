@@ -94,15 +94,16 @@ type UsageResponse struct {
 
 // AggregationResponse is the API representation of aggregated usage.
 type AggregationResponse struct {
-	KeyID        string    `json:"key_id"`
-	TenantID     string    `json:"tenant_id"`
-	Period       string    `json:"period"`
-	PeriodStart  time.Time `json:"period_start"`
-	RequestCount int64     `json:"request_count"`
-	ErrorCount   int64     `json:"error_count"`
-	TotalLatency int64     `json:"total_latency_ms"`
-	P50Latency   int64     `json:"p50_latency_ms"`
-	P99Latency   int64     `json:"p99_latency_ms"`
+	KeyID            string    `json:"key_id"`
+	TenantID         string    `json:"tenant_id"`
+	Period           string    `json:"period"`
+	PeriodStart      time.Time `json:"period_start"`
+	RequestCount     int64     `json:"request_count"`
+	ErrorCount       int64     `json:"error_count"`
+	ServerErrorCount int64     `json:"server_error_count"`
+	TotalLatency     int64     `json:"total_latency_ms"`
+	P50Latency       *int64    `json:"p50_latency_ms,omitempty"`
+	P99Latency       *int64    `json:"p99_latency_ms,omitempty"`
 }
 
 // RotationResponse is the API representation of a rotation record.
@@ -210,15 +211,16 @@ func toUsageResponse(r *usage.Record) *UsageResponse {
 
 func toAggregationResponse(a *usage.Aggregation) *AggregationResponse {
 	return &AggregationResponse{
-		KeyID:        a.KeyID.String(),
-		TenantID:     a.TenantID,
-		Period:       a.Period,
-		PeriodStart:  a.PeriodStart,
-		RequestCount: a.RequestCount,
-		ErrorCount:   a.ErrorCount,
-		TotalLatency: a.TotalLatency,
-		P50Latency:   a.P50Latency,
-		P99Latency:   a.P99Latency,
+		KeyID:            a.KeyID.String(),
+		TenantID:         a.TenantID,
+		Period:           a.Period,
+		PeriodStart:      a.PeriodStart,
+		RequestCount:     a.RequestCount,
+		ErrorCount:       a.ErrorCount,
+		ServerErrorCount: a.ServerErrorCount,
+		TotalLatency:     a.TotalLatency,
+		P50Latency:       a.P50Latency,
+		P99Latency:       a.P99Latency,
 	}
 }
 

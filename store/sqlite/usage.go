@@ -88,44 +88,97 @@ func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*u
 }
 
 func (s *usageStore) Aggregate(ctx context.Context, filter *usage.QueryFilter) ([]*usage.Aggregation, error) {
-	var models []usageAggModel
-	q := s.sdb.NewSelect(&models).OrderExpr("period_start DESC")
-
-	if filter != nil {
-		if filter.KeyID != nil {
-			q = q.Where("key_id = ?", filter.KeyID.String())
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
-		}
-		if filter.Period != "" {
-			q = q.Where("period = ?", filter.Period)
-		}
-		if filter.After != nil {
-			q = q.Where("period_start >= ?", dbTime(*filter.After))
-		}
-		if filter.Before != nil {
-			q = q.Where("period_start < ?", dbTime(*filter.Before))
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	if filter == nil {
+		return nil, usage.ErrInvalidPeriod
+	}
+	// created_at is UTC text, "2006-01-02 15:04:05 +0000 UTC", so a bucket is
+	// a prefix of it. The prefix length and parse layout come from this
+	// switch and never from the caller's string.
+	var prefixLen int
+	var layout string
+	switch filter.Period {
+	case usage.PeriodHourly:
+		prefixLen, layout = 13, "2006-01-02 15"
+	case usage.PeriodDaily:
+		prefixLen, layout = 10, "2006-01-02"
+	case usage.PeriodMonthly:
+		prefixLen, layout = 7, "2006-01"
+	default:
+		return nil, usage.ErrInvalidPeriod
 	}
 
-	if err := q.Scan(ctx); err != nil {
+	keyExpr := "''"
+	if filter.KeyID != nil {
+		keyExpr = "key_id"
+	}
+	args := []any{prefixLen}
+	where := "1=1"
+	if filter.TenantID != "" {
+		where += " AND tenant_id = ?"
+		args = append(args, filter.TenantID)
+	}
+	if filter.KeyID != nil {
+		where += " AND key_id = ?"
+		args = append(args, filter.KeyID.String())
+	}
+	if filter.After != nil {
+		where += " AND created_at >= ?"
+		args = append(args, dbTime(*filter.After))
+	}
+	if filter.Before != nil {
+		where += " AND created_at < ?"
+		args = append(args, dbTime(*filter.Before))
+	}
+
+	query := fmt.Sprintf(`SELECT substr(created_at, 1, ?) AS bucket, %[1]s AS key_id, tenant_id,
+       COUNT(*),
+       COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN status_code >= 500 THEN 1 ELSE 0 END), 0),
+       COALESCE(SUM(latency_ms), 0)
+FROM keysmith_usage
+WHERE %[2]s
+GROUP BY bucket, %[1]s, tenant_id
+ORDER BY bucket ASC, tenant_id ASC, key_id ASC`, keyExpr, where)
+
+	rows, err := s.sdb.Query(ctx, query, args...)
+	if err != nil {
 		return nil, fmt.Errorf("keysmith/sqlite: aggregate usage: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 
-	result := make([]*usage.Aggregation, 0, len(models))
-	for i := range models {
-		agg, err := aggFromModel(&models[i])
+	result := make([]*usage.Aggregation, 0)
+	for rows.Next() {
+		var (
+			bucket, keyStr, tenant                  string
+			requests, errCount, serverErrs, latency int64
+		)
+		if err := rows.Scan(&bucket, &keyStr, &tenant, &requests, &errCount, &serverErrs, &latency); err != nil {
+			return nil, fmt.Errorf("keysmith/sqlite: scan aggregation: %w", err)
+		}
+		start, err := time.ParseInLocation(layout, bucket, time.UTC)
 		if err != nil {
-			return nil, fmt.Errorf("keysmith/sqlite: convert aggregation: %w", err)
+			return nil, fmt.Errorf("keysmith/sqlite: parse bucket %q: %w", bucket, err)
+		}
+		agg := &usage.Aggregation{
+			TenantID:         tenant,
+			Period:           filter.Period,
+			PeriodStart:      start,
+			RequestCount:     requests,
+			ErrorCount:       errCount,
+			ServerErrorCount: serverErrs,
+			TotalLatency:     latency,
+		}
+		if keyStr != "" {
+			kid, err := id.ParseKeyID(keyStr)
+			if err != nil {
+				return nil, fmt.Errorf("keysmith/sqlite: parse key id %q: %w", keyStr, err)
+			}
+			agg.KeyID = kid
 		}
 		result = append(result, agg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("keysmith/sqlite: aggregate usage rows: %w", err)
 	}
 	return result, nil
 }

@@ -361,38 +361,6 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 	}, nil
 }
 
-// usageAggModel represents aggregated usage statistics.
-type usageAggModel struct {
-	grove.BaseModel `grove:"table:keysmith_usage_agg"`
-	KeyID           string    `grove:"key_id,pk"`
-	TenantID        string    `grove:"tenant_id,notnull"`
-	Period          string    `grove:"period,pk"`
-	PeriodStart     time.Time `grove:"period_start,pk"`
-	RequestCount    int64     `grove:"request_count,notnull"`
-	ErrorCount      int64     `grove:"error_count,notnull"`
-	TotalLatency    int64     `grove:"total_latency,notnull"`
-	P50Latency      int64     `grove:"p50_latency,notnull"`
-	P99Latency      int64     `grove:"p99_latency,notnull"`
-}
-
-func aggFromModel(m *usageAggModel) (*usage.Aggregation, error) {
-	kid, err := id.ParseKeyID(m.KeyID)
-	if err != nil {
-		return nil, err
-	}
-	return &usage.Aggregation{
-		KeyID:        kid,
-		TenantID:     m.TenantID,
-		Period:       m.Period,
-		PeriodStart:  m.PeriodStart,
-		RequestCount: m.RequestCount,
-		ErrorCount:   m.ErrorCount,
-		TotalLatency: m.TotalLatency,
-		P50Latency:   m.P50Latency,
-		P99Latency:   m.P99Latency,
-	}, nil
-}
-
 // ──────────────────────────────────────────────────
 // Rotation model
 // ──────────────────────────────────────────────────

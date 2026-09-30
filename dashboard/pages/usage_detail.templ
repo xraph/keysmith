@@ -61,8 +61,8 @@ templ UsageDetailPage(data UsageDetailData) {
 			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
 				@components.StatCard("bar-chart-3", "Total Requests", strconv.FormatInt(data.TotalCount, 10), "All-time")
 				@components.StatCard("alert-triangle", "Error Rate", computeErrorRate(data.Aggregations), "")
-				@components.StatCard("timer", "P50 Latency", computeAvgLatency(data.Aggregations), "Median response time")
-				@components.StatCard("zap", "P99 Latency", computeP99Latency(data.Aggregations), "Tail latency")
+				@components.StatCard("timer", "Avg Latency", computeAvgLatency(data.Aggregations), "Mean response time")
+				@components.StatCard("zap", "5xx Errors", computeServerErrors(data.Aggregations), "Server-side failures")
 			</div>
 		}
 		<!-- Aggregation Table -->
@@ -89,10 +89,10 @@ templ UsageDetailPage(data UsageDetailData) {
 										Errors
 									}
 									@table.Head() {
-										P50
+										Avg Latency
 									}
 									@table.Head() {
-										P99
+										5xx Errors
 									}
 								}
 							}
@@ -115,10 +115,10 @@ templ UsageDetailPage(data UsageDetailData) {
 											}
 										}
 										@table.Cell() {
-											<span class="text-sm">{ strconv.FormatInt(a.P50Latency, 10) }ms</span>
+											<span class="text-sm">{ avgLatencyMs(a) }ms</span>
 										}
 										@table.Cell() {
-											<span class="text-sm">{ strconv.FormatInt(a.P99Latency, 10) }ms</span>
+											<span class="text-sm">{ strconv.FormatInt(a.ServerErrorCount, 10) }</span>
 										}
 									}
 								}
@@ -198,15 +198,11 @@ templ UsageDetailPage(data UsageDetailData) {
 	</div>
 }
 
-// computeP99Latency calculates the average P99 latency from aggregations.
-func computeP99Latency(aggs []*usage.Aggregation) string {
-	if len(aggs) == 0 {
-		return "0ms"
-	}
+// computeServerErrors totals the 5xx responses across the aggregations.
+func computeServerErrors(aggs []*usage.Aggregation) string {
 	var total int64
 	for _, a := range aggs {
-		total += a.P99Latency
+		total += a.ServerErrorCount
 	}
-	avg := total / int64(len(aggs))
-	return strconv.FormatInt(avg, 10) + "ms"
+	return strconv.FormatInt(total, 10)
 }

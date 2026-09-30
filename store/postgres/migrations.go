@@ -220,8 +220,39 @@ ALTER TABLE keysmith_rotations DROP COLUMN IF EXISTS new_hint;`)
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "drop_usage_agg",
+			Version: "20260930000002",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, dropUsageAggSQL)
+				return err
+			},
+			// The table was never written to, so Down recreates it empty.
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `CREATE TABLE IF NOT EXISTS keysmith_usage_agg (
+    key_id        TEXT NOT NULL,
+    tenant_id     TEXT NOT NULL,
+    period        TEXT NOT NULL,
+    period_start  TIMESTAMPTZ NOT NULL,
+    request_count BIGINT NOT NULL DEFAULT 0,
+    error_count   BIGINT NOT NULL DEFAULT 0,
+    total_latency BIGINT NOT NULL DEFAULT 0,
+    p50_latency   BIGINT NOT NULL DEFAULT 0,
+    p99_latency   BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (key_id, period, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_keysmith_usage_agg_tenant ON keysmith_usage_agg (tenant_id, period, period_start DESC);`)
+				return err
+			},
+		},
 	)
 }
+
+// dropUsageAggSQL removes the aggregate table nothing ever wrote to. Usage is
+// aggregated from keysmith_usage now. It runs from both the grove migration
+// group and migrationSQL, so keep them in step.
+const dropUsageAggSQL = `DROP TABLE IF EXISTS keysmith_usage_agg`
 
 // rotationHintsSQL adds the old and new key hints to rotation records and an
 // index for looking a rotation up by the hash of the key it replaced. It runs
@@ -368,4 +399,7 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_grace ON keysmith_rotations (g
 
 	// 006 rotation hints and old-hash index (same SQL as the grove migration)
 	rotationHintsSQL,
+
+	// 007 drop the unused usage aggregate table (same SQL as the grove migration)
+	dropUsageAggSQL,
 }

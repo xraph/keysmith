@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -42,11 +43,14 @@ func (a *API) getKeyUsageAggregate(ctx forge.Context, req *GetKeyUsageAggregateR
 
 	aggs, err := a.eng.AggregateUsage(ctx.Context(), &usage.QueryFilter{
 		KeyID:  &keyID,
-		Period: req.Period,
+		Period: periodOrDefault(req.Period),
 		After:  parseTime(req.After),
 		Before: parseTime(req.Before),
 	})
 	if err != nil {
+		if errors.Is(err, usage.ErrInvalidPeriod) {
+			return nil, forge.BadRequest(err.Error())
+		}
 		return nil, fmt.Errorf("aggregate usage: %w", err)
 	}
 
@@ -59,11 +63,14 @@ func (a *API) getKeyUsageAggregate(ctx forge.Context, req *GetKeyUsageAggregateR
 
 func (a *API) listUsage(ctx forge.Context, req *ListUsageRequest) ([]*AggregationResponse, error) {
 	aggs, err := a.eng.AggregateUsage(ctx.Context(), &usage.QueryFilter{
-		Period: req.Period,
+		Period: periodOrDefault(req.Period),
 		After:  parseTime(req.After),
 		Before: parseTime(req.Before),
 	})
 	if err != nil {
+		if errors.Is(err, usage.ErrInvalidPeriod) {
+			return nil, forge.BadRequest(err.Error())
+		}
 		return nil, fmt.Errorf("list usage: %w", err)
 	}
 
@@ -72,4 +79,13 @@ func (a *API) listUsage(ctx forge.Context, req *ListUsageRequest) ([]*Aggregatio
 		resp[i] = toAggregationResponse(ag)
 	}
 	return resp, ctx.JSON(http.StatusOK, resp)
+}
+
+// periodOrDefault returns the requested aggregation period, or daily when the
+// request did not name one.
+func periodOrDefault(period string) string {
+	if period == "" {
+		return usage.PeriodDaily
+	}
+	return period
 }

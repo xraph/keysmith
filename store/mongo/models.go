@@ -306,36 +306,11 @@ func usageFromModel(m *usageModel) (*usage.Record, error) {
 	}, nil
 }
 
-// usageAggModel represents aggregated usage statistics.
+// usageAggModel was the aggregate collection nothing ever wrote to. It stays
+// only so the drop_keysmith_usage_agg migration, and the older migration that
+// created the collection, can name it. Usage is aggregated from colUsage.
 type usageAggModel struct {
 	grove.BaseModel `grove:"table:keysmith_usage_agg"`
-	KeyID           string    `grove:"key_id,pk"       bson:"key_id"`
-	TenantID        string    `grove:"tenant_id"       bson:"tenant_id"`
-	Period          string    `grove:"period,pk"       bson:"period"`
-	PeriodStart     time.Time `grove:"period_start,pk" bson:"period_start"`
-	RequestCount    int64     `grove:"request_count"   bson:"request_count"`
-	ErrorCount      int64     `grove:"error_count"     bson:"error_count"`
-	TotalLatency    int64     `grove:"total_latency"   bson:"total_latency"`
-	P50Latency      int64     `grove:"p50_latency"     bson:"p50_latency"`
-	P99Latency      int64     `grove:"p99_latency"     bson:"p99_latency"`
-}
-
-func aggFromModel(m *usageAggModel) (*usage.Aggregation, error) {
-	kid, err := id.ParseKeyID(m.KeyID)
-	if err != nil {
-		return nil, err
-	}
-	return &usage.Aggregation{
-		KeyID:        kid,
-		TenantID:     m.TenantID,
-		Period:       m.Period,
-		PeriodStart:  m.PeriodStart,
-		RequestCount: m.RequestCount,
-		ErrorCount:   m.ErrorCount,
-		TotalLatency: m.TotalLatency,
-		P50Latency:   m.P50Latency,
-		P99Latency:   m.P99Latency,
-	}, nil
 }
 
 // ──────────────────────────────────────────────────

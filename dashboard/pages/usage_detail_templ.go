@@ -5,18 +5,18 @@ package pages
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
 	"strconv"
 
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/badge"
 	"github.com/xraph/forgeui/components/button"
 	"github.com/xraph/forgeui/components/card"
 	"github.com/xraph/forgeui/components/separator"
 	"github.com/xraph/forgeui/components/table"
 	"github.com/xraph/forgeui/icons"
-
 	"github.com/xraph/keysmith/dashboard/components"
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/usage"
@@ -242,11 +242,11 @@ func UsageDetailPage(data UsageDetailData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = components.StatCard("timer", "P50 Latency", computeAvgLatency(data.Aggregations), "Median response time").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = components.StatCard("timer", "Avg Latency", computeAvgLatency(data.Aggregations), "Mean response time").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = components.StatCard("zap", "P99 Latency", computeP99Latency(data.Aggregations), "Tail latency").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = components.StatCard("zap", "5xx Errors", computeServerErrors(data.Aggregations), "Server-side failures").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -462,7 +462,7 @@ func UsageDetailPage(data UsageDetailData) templ.Component {
 										}()
 									}
 									ctx = templ.InitializeContext(ctx)
-									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "P50")
+									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "Avg Latency")
 									if templ_7745c5c3_Err != nil {
 										return templ_7745c5c3_Err
 									}
@@ -488,7 +488,7 @@ func UsageDetailPage(data UsageDetailData) templ.Component {
 										}()
 									}
 									ctx = templ.InitializeContext(ctx)
-									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "P99")
+									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "5xx Errors")
 									if templ_7745c5c3_Err != nil {
 										return templ_7745c5c3_Err
 									}
@@ -690,9 +690,9 @@ func UsageDetailPage(data UsageDetailData) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var32 string
-										templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(a.P50Latency, 10))
+										templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(avgLatencyMs(a))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage_detail.templ`, Line: 118, Col: 70}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage_detail.templ`, Line: 118, Col: 50}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 										if templ_7745c5c3_Err != nil {
@@ -729,15 +729,15 @@ func UsageDetailPage(data UsageDetailData) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var34 string
-										templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(a.P99Latency, 10))
+										templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(a.ServerErrorCount, 10))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage_detail.templ`, Line: 121, Col: 70}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage_detail.templ`, Line: 121, Col: 76}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 										if templ_7745c5c3_Err != nil {
 											return templ_7745c5c3_Err
 										}
-										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "ms</span>")
+										templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "</span>")
 										if templ_7745c5c3_Err != nil {
 											return templ_7745c5c3_Err
 										}
@@ -1388,17 +1388,13 @@ func UsageDetailPage(data UsageDetailData) templ.Component {
 	})
 }
 
-// computeP99Latency calculates the average P99 latency from aggregations.
-func computeP99Latency(aggs []*usage.Aggregation) string {
-	if len(aggs) == 0 {
-		return "0ms"
-	}
+// computeServerErrors totals the 5xx responses across the aggregations.
+func computeServerErrors(aggs []*usage.Aggregation) string {
 	var total int64
 	for _, a := range aggs {
-		total += a.P99Latency
+		total += a.ServerErrorCount
 	}
-	avg := total / int64(len(aggs))
-	return strconv.FormatInt(avg, 10) + "ms"
+	return strconv.FormatInt(total, 10)
 }
 
 var _ = templruntime.GeneratedTemplate

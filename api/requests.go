@@ -150,14 +150,14 @@ type GetKeyUsageRequest struct {
 // GetKeyUsageAggregateRequest is the request for aggregated usage.
 type GetKeyUsageAggregateRequest struct {
 	KeyID  string `path:"keyId" description:"Key ID"`
-	Period string `query:"period" description:"Aggregation period (hour, day, month)"`
+	Period string `query:"period" description:"Aggregation period (hourly, daily, monthly; default daily)"`
 	After  string `query:"after" description:"After timestamp (ISO 8601)"`
 	Before string `query:"before" description:"Before timestamp (ISO 8601)"`
 }
 
 // ListUsageRequest is the request for listing tenant-wide usage.
 type ListUsageRequest struct {
-	Period string `query:"period" description:"Aggregation period (hour, day, month)"`
+	Period string `query:"period" description:"Aggregation period (hourly, daily, monthly; default daily)"`
 	After  string `query:"after" description:"After timestamp (ISO 8601)"`
 	Before string `query:"before" description:"Before timestamp (ISO 8601)"`
 }

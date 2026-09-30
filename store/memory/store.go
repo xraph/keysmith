@@ -435,8 +435,65 @@ func (s *usageStore) Query(_ context.Context, filter *usage.QueryFilter) ([]*usa
 	return applyPagination(result, offset, limit), nil
 }
 
-func (s *usageStore) Aggregate(_ context.Context, _ *usage.QueryFilter) ([]*usage.Aggregation, error) {
-	return nil, nil
+func (s *usageStore) Aggregate(_ context.Context, filter *usage.QueryFilter) ([]*usage.Aggregation, error) {
+	if filter == nil {
+		return nil, usage.ErrInvalidPeriod
+	}
+	if _, err := usage.Truncate(time.Time{}, filter.Period); err != nil {
+		return nil, err
+	}
+
+	st := s.store()
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	type bucketKey struct {
+		start  int64
+		keyID  string
+		tenant string
+	}
+	buckets := make(map[bucketKey]*usage.Aggregation)
+	for _, rec := range st.usages {
+		if !matchUsageFilter(rec, filter) {
+			continue
+		}
+		start, _ := usage.Truncate(rec.CreatedAt, filter.Period)
+		k := bucketKey{start: start.Unix(), tenant: rec.TenantID}
+		if filter.KeyID != nil {
+			k.keyID = rec.KeyID.String()
+		}
+		agg, ok := buckets[k]
+		if !ok {
+			agg = &usage.Aggregation{TenantID: rec.TenantID, Period: filter.Period, PeriodStart: start}
+			if filter.KeyID != nil {
+				agg.KeyID = rec.KeyID
+			}
+			buckets[k] = agg
+		}
+		agg.RequestCount++
+		if rec.StatusCode >= 400 {
+			agg.ErrorCount++
+		}
+		if rec.StatusCode >= 500 {
+			agg.ServerErrorCount++
+		}
+		agg.TotalLatency += rec.Latency.Milliseconds()
+	}
+
+	result := make([]*usage.Aggregation, 0, len(buckets))
+	for _, agg := range buckets {
+		result = append(result, agg)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].PeriodStart.Equal(result[j].PeriodStart) {
+			return result[i].PeriodStart.Before(result[j].PeriodStart)
+		}
+		if result[i].TenantID != result[j].TenantID {
+			return result[i].TenantID < result[j].TenantID
+		}
+		return result[i].KeyID.String() < result[j].KeyID.String()
+	})
+	return result, nil
 }
 
 func (s *usageStore) Count(_ context.Context, filter *usage.QueryFilter) (int64, error) {
@@ -520,7 +577,7 @@ func matchUsageFilter(rec *usage.Record, f *usage.QueryFilter) bool {
 	if f.After != nil && rec.CreatedAt.Before(*f.After) {
 		return false
 	}
-	if f.Before != nil && rec.CreatedAt.After(*f.Before) {
+	if f.Before != nil && !rec.CreatedAt.Before(*f.Before) {
 		return false
 	}
 	return true

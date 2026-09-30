@@ -5,16 +5,16 @@ package pages
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
 import (
 	"fmt"
 	"strconv"
 
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
 	"github.com/xraph/forgeui/components/badge"
 	"github.com/xraph/forgeui/components/card"
 	"github.com/xraph/forgeui/components/table"
-
 	"github.com/xraph/keysmith/dashboard/components"
 	"github.com/xraph/keysmith/usage"
 )
@@ -59,7 +59,7 @@ func UsagePage(data UsagePageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = components.StatCard("timer", "Avg Latency", computeAvgLatency(data.Aggregations), "P50 latency").Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = components.StatCard("timer", "Avg Latency", computeAvgLatency(data.Aggregations), "Mean response time").Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -288,7 +288,7 @@ func UsagePage(data UsagePageData) templ.Component {
 										}()
 									}
 									ctx = templ.InitializeContext(ctx)
-									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "P50 Latency")
+									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "Avg Latency")
 									if templ_7745c5c3_Err != nil {
 										return templ_7745c5c3_Err
 									}
@@ -314,7 +314,7 @@ func UsagePage(data UsagePageData) templ.Component {
 										}()
 									}
 									ctx = templ.InitializeContext(ctx)
-									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "P99 Latency")
+									templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "5xx Errors")
 									if templ_7745c5c3_Err != nil {
 										return templ_7745c5c3_Err
 									}
@@ -516,9 +516,9 @@ func UsagePage(data UsagePageData) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var25 string
-										templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(a.P50Latency, 10) + "ms")
+										templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(avgLatencyMs(a) + "ms")
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 85, Col: 76}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 85, Col: 56}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 										if templ_7745c5c3_Err != nil {
@@ -555,9 +555,9 @@ func UsagePage(data UsagePageData) templ.Component {
 											return templ_7745c5c3_Err
 										}
 										var templ_7745c5c3_Var27 string
-										templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(a.P99Latency, 10) + "ms")
+										templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(a.ServerErrorCount, 10))
 										if templ_7745c5c3_Err != nil {
-											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 88, Col: 76}
+											return templ.Error{Err: templ_7745c5c3_Err, FileName: `dashboard/pages/usage.templ`, Line: 88, Col: 75}
 										}
 										_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 										if templ_7745c5c3_Err != nil {
@@ -1219,17 +1219,27 @@ func computeErrorRate(aggs []*usage.Aggregation) string {
 	return fmt.Sprintf("%.1f%%", rate)
 }
 
-// computeAvgLatency calculates the average P50 latency from aggregations.
+// computeAvgLatency calculates the mean latency across all requests in the
+// aggregations. Percentiles are not computed, so this is a mean.
 func computeAvgLatency(aggs []*usage.Aggregation) string {
-	if len(aggs) == 0 {
+	var totalReqs, totalLatency int64
+	for _, a := range aggs {
+		totalReqs += a.RequestCount
+		totalLatency += a.TotalLatency
+	}
+	if totalReqs == 0 {
 		return "0ms"
 	}
-	var total int64
-	for _, a := range aggs {
-		total += a.P50Latency
+	return fmt.Sprintf("%dms", totalLatency/totalReqs)
+}
+
+// avgLatencyMs returns the mean latency of one aggregation bucket in
+// milliseconds.
+func avgLatencyMs(a *usage.Aggregation) string {
+	if a.RequestCount == 0 {
+		return "0"
 	}
-	avg := total / int64(len(aggs))
-	return fmt.Sprintf("%dms", avg)
+	return strconv.FormatInt(a.TotalLatency/a.RequestCount, 10)
 }
 
 var _ = templruntime.GeneratedTemplate

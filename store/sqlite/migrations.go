@@ -221,5 +221,33 @@ ALTER TABLE keysmith_rotations DROP COLUMN new_hint;
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "drop_usage_agg",
+			Version: "20260930000002",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP TABLE IF EXISTS keysmith_usage_agg`)
+				return err
+			},
+			// The table was never written to, so Down recreates it empty.
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS keysmith_usage_agg (
+    key_id        TEXT NOT NULL,
+    tenant_id     TEXT NOT NULL,
+    period        TEXT NOT NULL,
+    period_start  TEXT NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    error_count   INTEGER NOT NULL DEFAULT 0,
+    total_latency INTEGER NOT NULL DEFAULT 0,
+    p50_latency   INTEGER NOT NULL DEFAULT 0,
+    p99_latency   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (key_id, period, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_keysmith_usage_agg_tenant ON keysmith_usage_agg (tenant_id, period, period_start DESC);
+`)
+				return err
+			},
+		},
 	)
 }

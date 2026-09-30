@@ -147,13 +147,6 @@ func migrationIndexes() map[string][]mongod.IndexModel {
 			{Keys: bson.D{{Key: "key_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
 		},
-		colUsageAgg: {
-			{
-				Keys:    bson.D{{Key: "key_id", Value: 1}, {Key: "period", Value: 1}, {Key: "period_start", Value: 1}},
-				Options: options.Index().SetUnique(true),
-			},
-			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "period", Value: 1}, {Key: "period_start", Value: -1}}},
-		},
 		colRotations: {
 			{Keys: bson.D{{Key: "key_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "grace_ends", Value: 1}}},

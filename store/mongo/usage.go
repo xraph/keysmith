@@ -95,53 +95,88 @@ func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*u
 }
 
 func (s *usageStore) Aggregate(ctx context.Context, filter *usage.QueryFilter) ([]*usage.Aggregation, error) {
-	var models []usageAggModel
-
-	f := bson.M{}
-	if filter != nil {
-		if filter.KeyID != nil {
-			f["key_id"] = filter.KeyID.String()
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
-		}
-		if filter.Period != "" {
-			f["period"] = filter.Period
-		}
-		if filter.After != nil || filter.Before != nil {
-			dateFilter := bson.M{}
-			if filter.After != nil {
-				dateFilter["$gte"] = *filter.After
-			}
-			if filter.Before != nil {
-				dateFilter["$lt"] = *filter.Before
-			}
-			f["period_start"] = dateFilter
-		}
+	if filter == nil {
+		return nil, usage.ErrInvalidPeriod
+	}
+	unit := map[string]string{
+		usage.PeriodHourly:  "hour",
+		usage.PeriodDaily:   "day",
+		usage.PeriodMonthly: "month",
+	}[filter.Period]
+	if unit == "" {
+		return nil, usage.ErrInvalidPeriod
 	}
 
-	q := s.mdb.NewFind(&models).
-		Filter(f).
-		Sort(bson.D{{Key: "period_start", Value: -1}})
-
-	if filter != nil {
-		if filter.Limit > 0 {
-			q = q.Limit(int64(filter.Limit))
+	match := bson.M{}
+	if filter.TenantID != "" {
+		match["tenant_id"] = filter.TenantID
+	}
+	if filter.KeyID != nil {
+		match["key_id"] = filter.KeyID.String()
+	}
+	if filter.After != nil || filter.Before != nil {
+		dateFilter := bson.M{}
+		if filter.After != nil {
+			dateFilter["$gte"] = *filter.After
 		}
-		if filter.Offset > 0 {
-			q = q.Skip(int64(filter.Offset))
+		if filter.Before != nil {
+			dateFilter["$lt"] = *filter.Before
 		}
+		match["created_at"] = dateFilter
 	}
 
-	if err := q.Scan(ctx); err != nil {
+	groupID := bson.M{
+		"bucket":    bson.M{"$dateTrunc": bson.M{"date": "$created_at", "unit": unit, "timezone": "UTC"}},
+		"tenant_id": "$tenant_id",
+	}
+	if filter.KeyID != nil {
+		groupID["key_id"] = "$key_id"
+	}
+
+	var rows []struct {
+		ID struct {
+			Bucket   time.Time `bson:"bucket"`
+			TenantID string    `bson:"tenant_id"`
+			KeyID    string    `bson:"key_id"`
+		} `bson:"_id"`
+		Requests     int64 `bson:"requests"`
+		Errors       int64 `bson:"errors"`
+		ServerErrors int64 `bson:"server_errors"`
+		Latency      int64 `bson:"latency"`
+	}
+	err := s.mdb.NewAggregate(colUsage).
+		Match(match).
+		Group(bson.M{
+			"_id":           groupID,
+			"requests":      bson.M{"$sum": 1},
+			"errors":        bson.M{"$sum": bson.M{"$cond": bson.A{bson.M{"$gte": bson.A{"$status_code", 400}}, 1, 0}}},
+			"server_errors": bson.M{"$sum": bson.M{"$cond": bson.A{bson.M{"$gte": bson.A{"$status_code", 500}}, 1, 0}}},
+			"latency":       bson.M{"$sum": "$latency_ms"},
+		}).
+		Sort(bson.D{{Key: "_id.bucket", Value: 1}, {Key: "_id.tenant_id", Value: 1}, {Key: "_id.key_id", Value: 1}}).
+		Scan(ctx, &rows)
+	if err != nil {
 		return nil, fmt.Errorf("keysmith/mongo: aggregate usage: %w", err)
 	}
 
-	result := make([]*usage.Aggregation, 0, len(models))
-	for i := range models {
-		agg, err := aggFromModel(&models[i])
-		if err != nil {
-			return nil, fmt.Errorf("keysmith/mongo: convert aggregation: %w", err)
+	result := make([]*usage.Aggregation, 0, len(rows))
+	for i := range rows {
+		r := &rows[i]
+		agg := &usage.Aggregation{
+			TenantID:         r.ID.TenantID,
+			Period:           filter.Period,
+			PeriodStart:      r.ID.Bucket.UTC(),
+			RequestCount:     r.Requests,
+			ErrorCount:       r.Errors,
+			ServerErrorCount: r.ServerErrors,
+			TotalLatency:     r.Latency,
+		}
+		if r.ID.KeyID != "" {
+			kid, err := id.ParseKeyID(r.ID.KeyID)
+			if err != nil {
+				return nil, fmt.Errorf("keysmith/mongo: parse key id %q: %w", r.ID.KeyID, err)
+			}
+			agg.KeyID = kid
 		}
 		result = append(result, agg)
 	}
