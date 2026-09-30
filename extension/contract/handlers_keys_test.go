@@ -183,3 +183,48 @@ func TestNoQueryResponseCarriesASecret(t *testing.T) {
 		}
 	})
 }
+
+func TestKeyDetailHidesAnotherTenantsPolicyAndADanglingOne(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		theirs := &policy.Policy{Name: "theirs", GracePeriod: time.Hour}
+		require.NoError(t, eng.CreatePolicy(tctx("t2"), theirs))
+
+		for name, pid := range map[string]id.PolicyID{
+			"another tenant's policy":      theirs.ID,
+			"a policy that does not exist": id.NewPolicyID(),
+		} {
+			r := create(t, eng, "t1", nil)
+			// Written straight to the store: CreateKey would refuse both.
+			k, err := s.Keys().Get(context.Background(), r.Key.ID)
+			require.NoError(t, err)
+			p := pid
+			k.PolicyID = &p
+			require.NoError(t, s.Keys().Update(context.Background(), k))
+
+			out, err := keysDetailHandler(deps)(context.Background(), keysDetailRequest{ID: r.Key.ID.String()}, principal())
+			require.NoError(t, err, name)
+			assert.Nil(t, out.Policy, name)
+			assert.Equal(t, pid.String(), out.Key.PolicyID, "%s: the key still shows the id it points at", name)
+		}
+	})
+}
+
+func TestKeysListFiltersByPolicy(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		pol := &policy.Policy{Name: "p"}
+		require.NoError(t, eng.CreatePolicy(tctx("t1"), pol))
+		with := create(t, eng, "t1", &keysmith.CreateKeyInput{Name: "with", Prefix: "sk", Environment: key.EnvLive, PolicyID: &pol.ID})
+		create(t, eng, "t1", nil)
+
+		out, err := keysListHandler(deps)(context.Background(), keysListRequest{PolicyID: pol.ID.String()}, principal())
+		require.NoError(t, err)
+		require.Len(t, out.Keys, 1)
+		assert.Equal(t, with.Key.ID.String(), out.Keys[0].ID)
+		assert.EqualValues(t, 1, out.Total)
+
+		_, err = keysListHandler(deps)(context.Background(), keysListRequest{PolicyID: "not-a-policy"}, principal())
+		assert.Equal(t, dashcontract.CodeBadRequest, codeOf(t, err))
+	})
+}
