@@ -249,5 +249,20 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_usage_agg_tenant ON keysmith_usage_agg (
 				return err
 			},
 		},
+		// Before the grace fix RotateKey recorded a window on every rotation
+		// but killed the old key at once. Those rows have no old hint. Close
+		// their windows so the new fallback never honours them. Both columns
+		// hold UTC text in one format, which orders as time.
+		&migrate.Migration{
+			Name:    "close_legacy_grace_windows",
+			Version: "20260930000003",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `UPDATE keysmith_rotations SET grace_ends = created_at WHERE old_hint = '' AND grace_ends > created_at`)
+				return err
+			},
+			// The closed windows were never honoured, so there is nothing to
+			// restore.
+			Down: func(context.Context, migrate.Executor) error { return nil },
+		},
 	)
 }

@@ -162,7 +162,13 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 		// The hash is not any key's current hash. It may still be the hash a
 		// key had before a rotation whose grace window is open.
 		rec, recErr := e.store.Rotations().GetInGraceByOldHash(ctx, hash, time.Now())
-		if recErr != nil {
+		// A record with no OldHint was written before the grace fix, when
+		// RotateKey recorded a window on every rotation (compromise ones
+		// too) but killed the old key at once. That window was never
+		// honoured, so it must not open now. The close_legacy_grace_windows
+		// migration closes these rows; this guard covers a store where it
+		// has not run, such as mongo's index-only Store.Migrate.
+		if recErr != nil || rec.OldHint == "" {
 			_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, err)
 			return nil, ErrInvalidKey
 		}

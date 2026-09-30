@@ -268,5 +268,35 @@ func init() {
 			// restore.
 			Down: func(context.Context, migrate.Executor) error { return nil },
 		},
+		// Before the grace fix RotateKey recorded a window on every rotation
+		// but killed the old key at once. Those documents have an empty or
+		// missing old_hint. Close their windows so the new fallback never
+		// honours them. grove stores both times as BSON dates, so $expr
+		// compares like with like. Store.Migrate only builds indexes and
+		// never runs this; the engine refuses hintless records either way.
+		&migrate.Migration{
+			Name:    "close_legacy_grace_windows",
+			Version: "20260930000003",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				_, err := mexec.DB().Collection(colRotations).UpdateMany(ctx,
+					bson.M{
+						"$or": bson.A{
+							bson.M{"old_hint": bson.M{"$exists": false}},
+							bson.M{"old_hint": ""},
+						},
+						"$expr": bson.M{"$gt": bson.A{"$grace_ends", "$created_at"}},
+					},
+					bson.A{bson.M{"$set": bson.M{"grace_ends": "$created_at"}}},
+				)
+				return err
+			},
+			// The closed windows were never honoured, so there is nothing to
+			// restore.
+			Down: func(context.Context, migrate.Executor) error { return nil },
+		},
 	)
 }

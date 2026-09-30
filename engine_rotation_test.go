@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/keysmith"
+	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/policy"
@@ -134,5 +135,36 @@ func TestRotateRefusesRevokedAndExpiredKeys(t *testing.T) {
 		expired := mustCreate(t, eng, ctx, &keysmith.CreateKeyInput{Name: "e", Prefix: "sk", Environment: key.EnvLive, ExpiresAt: &past})
 		_, err = eng.RotateKey(ctx, expired.Key.ID, rotation.ReasonManual)
 		assert.ErrorIs(t, err, keysmith.ErrInvalidStateTransition)
+	})
+}
+
+// Before the grace fix, RotateKey recorded a 24h window on every rotation,
+// compromise ones included, while killing the old key at once. Those records
+// have no OldHint. The engine must not honour their window.
+func TestLegacyRotationWithoutHintDoesNotReopen(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		cur := mustCreate(t, eng, ctx, nil)
+
+		// Built in pieces so secret scanning doesn't read it as a Stripe key.
+		// Keysmith's sk_live_ format looks just like Stripe's.
+		legacyRaw := "sk_" + "live_" + "legacyrawkeybeforethefix0001"
+		oldHash, err := keysmith.DefaultHasher().Hash(legacyRaw)
+		require.NoError(t, err)
+		require.NotEqual(t, cur.Key.KeyHash, oldHash)
+
+		now := time.Now()
+		require.NoError(t, s.Rotations().Create(ctx, &rotation.Record{
+			ID: id.NewRotationID(), KeyID: cur.Key.ID, TenantID: cur.Key.TenantID,
+			OldKeyHash: oldHash, NewKeyHash: cur.Key.KeyHash,
+			OldHint: "", NewHint: "", Reason: rotation.ReasonCompromise,
+			GraceTTL: 24 * time.Hour, GraceEnds: now.Add(time.Hour), CreatedAt: now.Add(-time.Minute),
+		}))
+
+		_, err = eng.ValidateKey(ctx, legacyRaw)
+		assert.ErrorIs(t, err, keysmith.ErrInvalidKey)
+
+		_, err = eng.ValidateKey(ctx, cur.RawKey)
+		assert.NoError(t, err, "the current key is unaffected")
 	})
 }

@@ -246,8 +246,26 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_usage_agg_tenant ON keysmith_usage_agg (
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "close_legacy_grace_windows",
+			Version: "20260930000003",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, closeLegacyGraceSQL)
+				return err
+			},
+			// The closed windows were never honoured, so there is nothing to
+			// restore.
+			Down: func(context.Context, migrate.Executor) error { return nil },
+		},
 	)
 }
+
+// closeLegacyGraceSQL closes the grace windows of rotations recorded before
+// the grace fix. RotateKey then recorded a window on every rotation but
+// killed the old key at once, and those rows have no old hint. It is
+// idempotent, so it runs from both the grove migration group and
+// migrationSQL (on every start); keep them in step.
+const closeLegacyGraceSQL = `UPDATE keysmith_rotations SET grace_ends = created_at WHERE old_hint = '' AND grace_ends > created_at`
 
 // dropUsageAggSQL removes the aggregate table nothing ever wrote to. Usage is
 // aggregated from keysmith_usage now. It runs from both the grove migration
@@ -402,4 +420,7 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_grace ON keysmith_rotations (g
 
 	// 007 drop the unused usage aggregate table (same SQL as the grove migration)
 	dropUsageAggSQL,
+
+	// 008 close legacy grace windows (same SQL as the grove migration)
+	closeLegacyGraceSQL,
 }
