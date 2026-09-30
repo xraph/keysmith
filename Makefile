@@ -1,4 +1,4 @@
-.PHONY: help build run test clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps
+.PHONY: help build run test test-backends clean fmt lint lint-fix vet tidy deps install dev hot check coverage b r t c f l lf v check-deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -147,6 +147,10 @@ test-race:
 	@echo "$(BLUE)Running tests with race detector...$(NC)"
 	$(GO) test -race -v ./...
 	@echo "$(GREEN)✓ Race tests complete$(NC)"
+
+## test-backends: Run tests against memory, sqlite, postgres and mongo (needs Docker)
+test-backends:
+	@./scripts/test-backends.sh
 
 ## coverage: Generate test coverage
 coverage:

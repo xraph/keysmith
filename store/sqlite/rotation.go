@@ -76,7 +76,7 @@ func (s *rotationStore) List(ctx context.Context, filter *rotation.ListFilter) (
 func (s *rotationStore) ListPendingGrace(ctx context.Context, now time.Time) ([]*rotation.Record, error) {
 	var models []rotationModel
 	err := s.sdb.NewSelect(&models).
-		Where("grace_ends > ?", now).
+		Where("grace_ends > ?", dbTime(now)).
 		OrderExpr("grace_ends ASC").
 		Scan(ctx)
 	if err != nil {

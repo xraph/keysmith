@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
@@ -16,6 +17,10 @@ import (
 	"github.com/xraph/keysmith/scope"
 	"github.com/xraph/keysmith/store"
 	"github.com/xraph/keysmith/usage"
+
+	// Migrate needs the sqlite migration executor registered, and a host that
+	// only imports this package should not have to know that.
+	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 )
 
 // compile-time interface check
@@ -85,4 +90,22 @@ func errNotFound(entity string) error { return &notFoundError{entity: entity} }
 // isNoRows checks for the standard sql.ErrNoRows sentinel.
 func isNoRows(err error) bool {
 	return errors.Is(err, sql.ErrNoRows)
+}
+
+// dbTime normalizes a time before it is bound to a query or written to a
+// model. modernc/sqlite stores a time.Time as t.String() unless the DSN sets
+// _time_format, and this store does not own the DSN. That string only scans
+// back when it is UTC with no monotonic reading: a monotonic reading adds
+// " m=+..." and a local zone adds a name, and either one fails the scan for
+// every row a query touches. t.UTC() fixes both and keeps the instant. UTC
+// strings with trimmed fractions also sort as text, which the time
+// comparisons in this package rely on.
+func dbTime(t time.Time) time.Time { return t.UTC() }
+
+func dbTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := dbTime(*t)
+	return &u
 }

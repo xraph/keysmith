@@ -56,12 +56,12 @@ func keyToModel(k *key.Key) *keyModel {
 		State:       string(k.State),
 		Metadata:    string(metadata),
 		CreatedBy:   k.CreatedBy,
-		ExpiresAt:   k.ExpiresAt,
-		LastUsedAt:  k.LastUsedAt,
-		RotatedAt:   k.RotatedAt,
-		RevokedAt:   k.RevokedAt,
-		CreatedAt:   k.CreatedAt,
-		UpdatedAt:   k.UpdatedAt,
+		ExpiresAt:   dbTimePtr(k.ExpiresAt),
+		LastUsedAt:  dbTimePtr(k.LastUsedAt),
+		RotatedAt:   dbTimePtr(k.RotatedAt),
+		RevokedAt:   dbTimePtr(k.RevokedAt),
+		CreatedAt:   dbTime(k.CreatedAt),
+		UpdatedAt:   dbTime(k.UpdatedAt),
 	}
 	if k.PolicyID != nil {
 		s := k.PolicyID.String()
@@ -168,8 +168,8 @@ func policyToModel(pol *policy.Policy) *policyModel {
 		DailyQuota:      pol.DailyQuota,
 		MonthlyQuota:    pol.MonthlyQuota,
 		Metadata:        string(metadata),
-		CreatedAt:       pol.CreatedAt,
-		UpdatedAt:       pol.UpdatedAt,
+		CreatedAt:       dbTime(pol.CreatedAt),
+		UpdatedAt:       dbTime(pol.UpdatedAt),
 	}
 }
 
@@ -261,7 +261,7 @@ func scopeToModel(sc *scope.Scope) *scopeModel {
 		Name:        sc.Name,
 		Description: sc.Description,
 		Metadata:    string(metadata),
-		CreatedAt:   sc.CreatedAt,
+		CreatedAt:   dbTime(sc.CreatedAt),
 	}
 	if sc.Parent != "" {
 		m.Parent = &sc.Parent
@@ -327,7 +327,7 @@ func usageToModel(rec *usage.Record) *usageModel {
 		UserAgent:  rec.UserAgent,
 		LatencyMs:  rec.Latency.Milliseconds(),
 		Metadata:   string(metadata),
-		CreatedAt:  rec.CreatedAt,
+		CreatedAt:  dbTime(rec.CreatedAt),
 	}
 }
 
@@ -420,9 +420,9 @@ func rotationToModel(rec *rotation.Record) *rotationModel {
 		NewKeyHash: rec.NewKeyHash,
 		Reason:     string(rec.Reason),
 		GraceTTLMs: rec.GraceTTL.Milliseconds(),
-		GraceEnds:  rec.GraceEnds,
+		GraceEnds:  dbTime(rec.GraceEnds),
 		RotatedBy:  rec.RotatedBy,
-		CreatedAt:  rec.CreatedAt,
+		CreatedAt:  dbTime(rec.CreatedAt),
 	}
 }
 

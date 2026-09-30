@@ -100,7 +100,7 @@ func (s *keyStore) UpdateState(ctx context.Context, keyID id.KeyID, state key.St
 
 func (s *keyStore) UpdateLastUsed(ctx context.Context, keyID id.KeyID, at time.Time) error {
 	res, err := s.sdb.NewUpdate((*keyModel)(nil)).
-		Set("last_used_at = ?", at).
+		Set("last_used_at = ?", dbTime(at)).
 		Where("id = ?", keyID.String()).
 		Exec(ctx)
 	if err != nil {
@@ -209,7 +209,7 @@ func (s *keyStore) ListExpired(ctx context.Context, before time.Time) ([]*key.Ke
 	err := s.sdb.NewSelect(&models).
 		Where("state = ?", string(key.StateActive)).
 		Where("expires_at IS NOT NULL").
-		Where("expires_at < ?", before).
+		Where("expires_at < ?", dbTime(before)).
 		Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("keysmith/sqlite: list expired: %w", err)

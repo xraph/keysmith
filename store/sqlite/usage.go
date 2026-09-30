@@ -59,10 +59,10 @@ func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*u
 			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.After != nil {
-			q = q.Where("created_at >= ?", *filter.After)
+			q = q.Where("created_at >= ?", dbTime(*filter.After))
 		}
 		if filter.Before != nil {
-			q = q.Where("created_at < ?", *filter.Before)
+			q = q.Where("created_at < ?", dbTime(*filter.Before))
 		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
@@ -102,10 +102,10 @@ func (s *usageStore) Aggregate(ctx context.Context, filter *usage.QueryFilter) (
 			q = q.Where("period = ?", filter.Period)
 		}
 		if filter.After != nil {
-			q = q.Where("period_start >= ?", *filter.After)
+			q = q.Where("period_start >= ?", dbTime(*filter.After))
 		}
 		if filter.Before != nil {
-			q = q.Where("period_start < ?", *filter.Before)
+			q = q.Where("period_start < ?", dbTime(*filter.Before))
 		}
 		if filter.Limit > 0 {
 			q = q.Limit(filter.Limit)
@@ -141,10 +141,10 @@ func (s *usageStore) Count(ctx context.Context, filter *usage.QueryFilter) (int6
 			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.After != nil {
-			q = q.Where("created_at >= ?", *filter.After)
+			q = q.Where("created_at >= ?", dbTime(*filter.After))
 		}
 		if filter.Before != nil {
-			q = q.Where("created_at < ?", *filter.Before)
+			q = q.Where("created_at < ?", dbTime(*filter.Before))
 		}
 	}
 
@@ -157,7 +157,7 @@ func (s *usageStore) Count(ctx context.Context, filter *usage.QueryFilter) (int6
 
 func (s *usageStore) Purge(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.sdb.NewDelete((*usageModel)(nil)).
-		Where("created_at < ?", before).
+		Where("created_at < ?", dbTime(before)).
 		Exec(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("keysmith/sqlite: purge usage: %w", err)
@@ -175,8 +175,8 @@ func (s *usageStore) DailyCount(ctx context.Context, keyID id.KeyID, date time.T
 
 	q := s.sdb.NewSelect((*usageModel)(nil)).
 		Where("key_id = ?", keyID.String()).
-		Where("created_at >= ?", dayStart).
-		Where("created_at < ?", dayEnd)
+		Where("created_at >= ?", dbTime(dayStart)).
+		Where("created_at < ?", dbTime(dayEnd))
 
 	count, err := q.Count(ctx)
 	if err != nil {
@@ -191,8 +191,8 @@ func (s *usageStore) MonthlyCount(ctx context.Context, keyID id.KeyID, month tim
 
 	q := s.sdb.NewSelect((*usageModel)(nil)).
 		Where("key_id = ?", keyID.String()).
-		Where("created_at >= ?", monthStart).
-		Where("created_at < ?", monthEnd)
+		Where("created_at >= ?", dbTime(monthStart)).
+		Where("created_at < ?", dbTime(monthEnd))
 
 	count, err := q.Count(ctx)
 	if err != nil {
