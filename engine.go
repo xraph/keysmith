@@ -48,6 +48,10 @@ func NewEngine(opts ...Option) (*Engine, error) {
 // Store returns the underlying composite store.
 func (e *Engine) Store() store.Store { return e.store }
 
+// RateLimiterConfigured reports whether a RateLimiter was injected. Without
+// one, a policy's RateLimit is stored and never enforced.
+func (e *Engine) RateLimiterConfigured() bool { return e.ratelimiter != nil }
+
 // Health checks the health of the engine by pinging its store.
 func (e *Engine) Health(ctx context.Context) error {
 	return e.store.Ping(ctx)

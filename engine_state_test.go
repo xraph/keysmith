@@ -3,6 +3,7 @@ package keysmith_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,6 +13,7 @@ import (
 	"github.com/xraph/keysmith/internal/storetest"
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/store"
+	"github.com/xraph/keysmith/store/memory"
 )
 
 func newEngine(t *testing.T, s store.Store, opts ...keysmith.Option) (*keysmith.Engine, context.Context) { //nolint:unparam // opts is used by later tests
@@ -75,4 +77,20 @@ func TestStateChangesOnMissingKeyAreNotFound(t *testing.T) {
 		assert.ErrorIs(t, eng.SuspendKey(ctx, id.NewKeyID()), keysmith.ErrKeyNotFound)
 		assert.ErrorIs(t, eng.RevokeKey(ctx, id.NewKeyID(), "x"), keysmith.ErrKeyNotFound)
 	})
+}
+
+type allowAll struct{}
+
+func (allowAll) Allow(context.Context, string, int, time.Duration) (bool, error) { return true, nil }
+func (allowAll) Remaining(context.Context, string, int, time.Duration) (int, error) {
+	return 0, nil
+}
+
+func TestRateLimiterConfigured(t *testing.T) {
+	without, err := keysmith.NewEngine(keysmith.WithStore(memory.New()))
+	require.NoError(t, err)
+	assert.False(t, without.RateLimiterConfigured())
+	with, err := keysmith.NewEngine(keysmith.WithStore(memory.New()), keysmith.WithRateLimiter(allowAll{}))
+	require.NoError(t, err)
+	assert.True(t, with.RateLimiterConfigured())
 }
