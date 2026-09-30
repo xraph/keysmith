@@ -228,3 +228,25 @@ func TestKeysListFiltersByPolicy(t *testing.T) {
 		assert.Equal(t, dashcontract.CodeBadRequest, codeOf(t, err))
 	})
 }
+
+// The memory store's ListByKey matches scopes by name across every tenant and
+// in map order, so the same name in two tenants comes back twice. The contract
+// sorts and de-duplicates whatever the store returns.
+func TestKeyScopesAreSortedAndUniqueOnMemory(t *testing.T) {
+	deps, eng := setup(t, memory.New())
+	for _, name := range []string{"write", "read"} {
+		require.NoError(t, eng.CreateScope(tctx("t1"), &scope.Scope{Name: name}))
+	}
+	require.NoError(t, eng.CreateScope(tctx("t2"), &scope.Scope{Name: "read"}))
+	k := create(t, eng, "t1", &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, Scopes: []string{"write", "read"}})
+
+	for i := 0; i < 20; i++ {
+		out, err := keysDetailHandler(deps)(context.Background(), keysDetailRequest{ID: k.Key.ID.String()}, principal())
+		require.NoError(t, err)
+		require.Equal(t, []string{"read", "write"}, out.Key.Scopes)
+		list, err := keysListHandler(deps)(context.Background(), keysListRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, list.Keys, 1)
+		require.Equal(t, []string{"read", "write"}, list.Keys[0].Scopes)
+	}
+}

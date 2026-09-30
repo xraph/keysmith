@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"time"
 
@@ -72,8 +73,10 @@ func clampPage(limit, offset int) (lim, off int) {
 	return limit, offset
 }
 
-// scopeNames reads a key's scope names. Key reads never populate
-// key.Key.Scopes on any backend, so the scope store is the only source.
+// scopeNames reads a key's scope names, sorted and without duplicates. Key
+// reads never populate key.Key.Scopes on any backend, so the scope store is
+// the only source. The memory store's ListByKey matches by name across
+// tenants in map order, so it can return one name twice in any order.
 func scopeNames(ctx context.Context, eng *keysmith.Engine, keyID id.KeyID) ([]string, error) {
 	scopes, err := eng.Store().Scopes().ListByKey(ctx, keyID)
 	if err != nil {
@@ -83,7 +86,8 @@ func scopeNames(ctx context.Context, eng *keysmith.Engine, keyID id.KeyID) ([]st
 	for _, s := range scopes {
 		names = append(names, s.Name)
 	}
-	return names, nil
+	sort.Strings(names)
+	return slices.Compact(names), nil
 }
 
 func keysListHandler(deps Deps) func(context.Context, keysListRequest, dashcontract.Principal) (keysListResponse, error) {
