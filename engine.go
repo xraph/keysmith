@@ -270,11 +270,15 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	return &key.CreateResult{Key: k, RawKey: rawKey}, nil
 }
 
-// RevokeKey permanently disables a key.
+// RevokeKey permanently disables a key. Revocation is terminal: no state
+// change leads out of it, and revoking twice is refused so hooks fire once.
 func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return fmt.Errorf("get key: %w", err)
+	}
+	if k.State == key.StateRevoked {
+		return ErrInvalidStateTransition
 	}
 
 	now := time.Now()
@@ -290,15 +294,21 @@ func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) e
 	return nil
 }
 
-// SuspendKey temporarily disables a key.
+// SuspendKey temporarily disables an active key. Only an active key can be
+// suspended; anything else, a revoked key above all, is refused.
 func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
+	k, err := e.store.Keys().Get(ctx, keyID)
+	if err != nil {
+		return fmt.Errorf("get key: %w", err)
+	}
+	if k.State != key.StateActive {
+		return ErrInvalidStateTransition
+	}
 	if err := e.store.Keys().UpdateState(ctx, keyID, key.StateSuspended); err != nil {
 		return fmt.Errorf("suspend key: %w", err)
 	}
-	k, _ := e.store.Keys().Get(ctx, keyID)
-	if k != nil {
-		_ = e.hooks.FireKeySuspended(ctx, k)
-	}
+	k.State = key.StateSuspended
+	_ = e.hooks.FireKeySuspended(ctx, k)
 	return nil
 }
 
