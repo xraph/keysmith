@@ -56,3 +56,13 @@ func WithGroveDatabase(name string) ExtOption {
 		e.useGrove = true
 	}
 }
+
+// WithDashboardTenant sets the tenant (and optional app) the dashboard's
+// contract handlers use when a request carries no tenant claim. A YAML
+// dashboard.tenant_id or dashboard.app_id wins over these values.
+func WithDashboardTenant(tenantID, appID string) ExtOption {
+	return func(e *Extension) {
+		e.config.Dashboard.TenantID = tenantID
+		e.config.Dashboard.AppID = appID
+	}
+}

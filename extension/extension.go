@@ -10,6 +10,8 @@ import (
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/forge"
+	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
@@ -18,6 +20,7 @@ import (
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/api"
 	ksdash "github.com/xraph/keysmith/dashboard"
+	kscontract "github.com/xraph/keysmith/extension/contract"
 	"github.com/xraph/keysmith/plugin"
 	"github.com/xraph/keysmith/store"
 	mongostore "github.com/xraph/keysmith/store/mongo"
@@ -237,6 +240,7 @@ func (e *Extension) loadConfiguration() error {
 		forge.F("disable_migrate", e.config.DisableMigrate),
 		forge.F("base_path", e.config.BasePath),
 		forge.F("grove_database", e.config.GroveDatabase),
+		forge.F("dashboard_tenant_id", e.config.Dashboard.TenantID),
 	)
 
 	return nil
@@ -300,9 +304,55 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	if yamlConfig.GroveDatabase == "" && programmaticConfig.GroveDatabase != "" {
 		yamlConfig.GroveDatabase = programmaticConfig.GroveDatabase
 	}
+	if yamlConfig.Dashboard.TenantID == "" && programmaticConfig.Dashboard.TenantID != "" {
+		yamlConfig.Dashboard.TenantID = programmaticConfig.Dashboard.TenantID
+	}
+	if yamlConfig.Dashboard.AppID == "" && programmaticConfig.Dashboard.AppID != "" {
+		yamlConfig.Dashboard.AppID = programmaticConfig.Dashboard.AppID
+	}
 
 	// Fill remaining zeros with defaults.
 	return e.mergeWithDefaults(yamlConfig)
+}
+
+// RegisterContractContributor implements dashboard.ContractContributorAware.
+// It registers the keysmith contract contributor, which is what the React
+// shell reads.
+func (e *Extension) RegisterContractContributor(
+	disp *dispatcher.Dispatcher,
+	reg dashcontract.Registry,
+	wreg dashcontract.WardenRegistry,
+) error {
+	if e.eng == nil {
+		// Nothing to wire yet. A quiet skip, not a panic that takes the
+		// dashboard down with it. The logger may not exist either on an
+		// extension that was never registered.
+		if logger := e.Logger(); logger != nil {
+			logger.Warn("keysmith: not initialised; skipping contract contributor registration")
+		}
+		return nil
+	}
+
+	names := make([]string, 0, len(e.exts))
+	for _, x := range e.exts {
+		names = append(names, x.Name())
+	}
+
+	deps := kscontract.Deps{
+		Engine:          e.eng,
+		DefaultTenantID: e.config.Dashboard.TenantID,
+		DefaultAppID:    e.config.Dashboard.AppID,
+		Plugins:         names,
+	}
+	// Logger may be nil on an extension that was never registered; Deps
+	// treats nil as "log nothing".
+	if logger := e.Logger(); logger != nil {
+		deps.Logger = logger
+	}
+	if err := kscontract.Register(disp, reg, wreg, deps); err != nil {
+		return fmt.Errorf("keysmith: register contract contributor: %w", err)
+	}
+	return nil
 }
 
 // resolveGroveDB resolves a *grove.DB from the DI container.
