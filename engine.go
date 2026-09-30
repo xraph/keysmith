@@ -75,6 +75,15 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 		tenantID = input.TenantID
 	}
 
+	var pol *policy.Policy
+	if input.PolicyID != nil {
+		var polErr error
+		pol, polErr = e.store.Policies().Get(ctx, *input.PolicyID)
+		if polErr != nil {
+			return nil, fmt.Errorf("get policy: %w", polErr)
+		}
+	}
+
 	rawKey, err := e.generator.Generate(input.Prefix, input.Environment)
 	if err != nil {
 		return nil, fmt.Errorf("generate key: %w", err)
@@ -106,15 +115,14 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 	}
 
 	// Apply policy constraints if assigned.
-	if input.PolicyID != nil {
-		pol, polErr := e.store.Policies().Get(ctx, *input.PolicyID)
-		if polErr != nil {
-			return nil, fmt.Errorf("get policy: %w", polErr)
-		}
-		if pol.MaxKeyLifetime > 0 && input.ExpiresAt == nil {
-			expiry := now.Add(pol.MaxKeyLifetime)
-			k.ExpiresAt = &expiry
-		}
+	if pol != nil && pol.MaxKeyLifetime > 0 && input.ExpiresAt == nil {
+		expiry := now.Add(pol.MaxKeyLifetime)
+		k.ExpiresAt = &expiry
+	}
+
+	// Refuse unknown or disallowed scopes before anything is written.
+	if err := e.checkScopes(ctx, tenantID, pol, input.Scopes); err != nil {
+		return nil, err
 	}
 
 	if err := e.store.Keys().Create(ctx, k); err != nil {
@@ -420,7 +428,44 @@ func (e *Engine) DeleteScope(ctx context.Context, scopeID id.ScopeID) error {
 
 // AssignScopes assigns scopes to a key by name.
 func (e *Engine) AssignScopes(ctx context.Context, keyID id.KeyID, scopeNames []string) error {
+	k, err := e.store.Keys().Get(ctx, keyID)
+	if err != nil {
+		return fmt.Errorf("get key: %w", err)
+	}
+	var pol *policy.Policy
+	if k.PolicyID != nil {
+		pol, err = e.store.Policies().Get(ctx, *k.PolicyID)
+		if err != nil {
+			return fmt.Errorf("get policy: %w", err)
+		}
+	}
+	if err := e.checkScopes(ctx, k.TenantID, pol, scopeNames); err != nil {
+		return err
+	}
 	return e.store.Scopes().AssignToKey(ctx, keyID, scopeNames)
+}
+
+// checkScopes resolves every scope name in the tenant and, when the policy
+// lists allowed scopes, checks each against it. It runs before anything is
+// written, so a refused create or assignment leaves no trace. An empty
+// AllowedScopes means the policy does not restrict scopes.
+func (e *Engine) checkScopes(ctx context.Context, tenantID string, pol *policy.Policy, names []string) error {
+	var allowed map[string]bool
+	if pol != nil && len(pol.AllowedScopes) > 0 {
+		allowed = make(map[string]bool, len(pol.AllowedScopes))
+		for _, s := range pol.AllowedScopes {
+			allowed[s] = true
+		}
+	}
+	for _, name := range names {
+		if _, err := e.store.Scopes().GetByName(ctx, tenantID, name); err != nil {
+			return fmt.Errorf("scope %q: %w", name, err)
+		}
+		if allowed != nil && !allowed[name] {
+			return fmt.Errorf("scope %q: %w", name, ErrScopeNotAllowed)
+		}
+	}
+	return nil
 }
 
 // RemoveScopes removes scopes from a key by name.
