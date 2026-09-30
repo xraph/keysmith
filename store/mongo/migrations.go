@@ -209,6 +209,7 @@ func init() {
 				return mexec.CreateIndexes(ctx, colRotations, []mongo.IndexModel{
 					{Keys: bson.D{{Key: "key_id", Value: 1}, {Key: "created_at", Value: -1}}},
 					{Keys: bson.D{{Key: "grace_ends", Value: 1}}},
+					{Keys: bson.D{{Key: "old_key_hash", Value: 1}}},
 				})
 			},
 			Down: func(ctx context.Context, exec migrate.Executor) error {

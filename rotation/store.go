@@ -14,4 +14,13 @@ type Store interface {
 	List(ctx context.Context, filter *ListFilter) ([]*Record, error)
 	ListPendingGrace(ctx context.Context, now time.Time) ([]*Record, error)
 	LatestForKey(ctx context.Context, keyID id.KeyID) (*Record, error)
+
+	// GetInGraceByOldHash returns the record whose OldKeyHash equals hash and
+	// whose GraceEnds is after now. It returns store.ErrRotationNotFound when
+	// none matches. If several match, the one with the latest GraceEnds wins.
+	GetInGraceByOldHash(ctx context.Context, hash string, now time.Time) (*Record, error)
+
+	// EndGrace sets GraceEnds to at on every record for the key whose
+	// GraceEnds is after at, and returns how many records changed.
+	EndGrace(ctx context.Context, keyID id.KeyID, at time.Time) (int64, error)
 }

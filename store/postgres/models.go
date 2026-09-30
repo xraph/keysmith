@@ -349,6 +349,8 @@ type rotationModel struct {
 	TenantID        string    `grove:"tenant_id,notnull"`
 	OldKeyHash      string    `grove:"old_key_hash,notnull"`
 	NewKeyHash      string    `grove:"new_key_hash,notnull"`
+	OldHint         string    `grove:"old_hint,notnull"`
+	NewHint         string    `grove:"new_hint,notnull"`
 	Reason          string    `grove:"reason,notnull"`
 	GraceTTLMs      int64     `grove:"grace_ttl_ms,notnull"`
 	GraceEnds       time.Time `grove:"grace_ends,notnull"`
@@ -363,6 +365,8 @@ func rotationToModel(rec *rotation.Record) *rotationModel {
 		TenantID:   rec.TenantID,
 		OldKeyHash: rec.OldKeyHash,
 		NewKeyHash: rec.NewKeyHash,
+		OldHint:    rec.OldHint,
+		NewHint:    rec.NewHint,
 		Reason:     string(rec.Reason),
 		GraceTTLMs: rec.GraceTTL.Milliseconds(),
 		GraceEnds:  rec.GraceEnds,
@@ -386,6 +390,8 @@ func rotationFromModel(m *rotationModel) (*rotation.Record, error) {
 		TenantID:   m.TenantID,
 		OldKeyHash: m.OldKeyHash,
 		NewKeyHash: m.NewKeyHash,
+		OldHint:    m.OldHint,
+		NewHint:    m.NewHint,
 		Reason:     rotation.Reason(m.Reason),
 		GraceTTL:   time.Duration(m.GraceTTLMs) * time.Millisecond,
 		GraceEnds:  m.GraceEnds,

@@ -120,3 +120,31 @@ func (s *rotationStore) LatestForKey(ctx context.Context, keyID id.KeyID) (*rota
 	}
 	return rotationFromModel(&m)
 }
+
+func (s *rotationStore) GetInGraceByOldHash(ctx context.Context, hash string, now time.Time) (*rotation.Record, error) {
+	var models []rotationModel
+	err := s.mdb.NewFind(&models).
+		Filter(bson.M{"old_key_hash": hash, "grace_ends": bson.M{"$gt": now}}).
+		Sort(bson.D{{Key: "grace_ends", Value: -1}}).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("keysmith/mongo: get in-grace rotation: %w", err)
+	}
+	if len(models) == 0 {
+		return nil, errNotFound("rotation")
+	}
+	return rotationFromModel(&models[0])
+}
+
+func (s *rotationStore) EndGrace(ctx context.Context, keyID id.KeyID, at time.Time) (int64, error) {
+	res, err := s.mdb.NewUpdate((*rotationModel)(nil)).
+		Filter(bson.M{"key_id": keyID.String(), "grace_ends": bson.M{"$gt": at}}).
+		Set("grace_ends", at).
+		Many().
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("keysmith/mongo: end grace: %w", err)
+	}
+	return res.ModifiedCount(), nil
+}

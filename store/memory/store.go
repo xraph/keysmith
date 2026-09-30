@@ -786,3 +786,34 @@ func applyPagination[T any](items []*T, offset, limit int) []*T {
 	}
 	return items
 }
+
+func (s *rotationStore) GetInGraceByOldHash(_ context.Context, hash string, now time.Time) (*rotation.Record, error) {
+	st := s.store()
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var best *rotation.Record
+	for _, r := range st.rotations {
+		if r.OldKeyHash == hash && r.GraceEnds.After(now) && (best == nil || r.GraceEnds.After(best.GraceEnds)) {
+			best = r
+		}
+	}
+	if best == nil {
+		return nil, errNotFound("rotation")
+	}
+	cp := *best
+	return &cp, nil
+}
+
+func (s *rotationStore) EndGrace(_ context.Context, keyID id.KeyID, at time.Time) (int64, error) {
+	st := s.store()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	var n int64
+	for _, r := range st.rotations {
+		if r.KeyID.String() == keyID.String() && r.GraceEnds.After(at) {
+			r.GraceEnds = at
+			n++
+		}
+	}
+	return n, nil
+}

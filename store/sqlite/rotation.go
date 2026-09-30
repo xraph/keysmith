@@ -109,3 +109,33 @@ func (s *rotationStore) LatestForKey(ctx context.Context, keyID id.KeyID) (*rota
 	}
 	return rotationFromModel(m)
 }
+
+func (s *rotationStore) GetInGraceByOldHash(ctx context.Context, hash string, now time.Time) (*rotation.Record, error) {
+	m := new(rotationModel)
+	err := s.sdb.NewSelect(m).
+		Where("old_key_hash = ?", hash).
+		Where("grace_ends > ?", dbTime(now)).
+		OrderExpr("grace_ends DESC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if isNoRows(err) {
+			return nil, errNotFound("rotation")
+		}
+		return nil, fmt.Errorf("keysmith/sqlite: get in-grace rotation: %w", err)
+	}
+	return rotationFromModel(m)
+}
+
+func (s *rotationStore) EndGrace(ctx context.Context, keyID id.KeyID, at time.Time) (int64, error) {
+	res, err := s.sdb.NewUpdate((*rotationModel)(nil)).
+		Set("grace_ends = ?", dbTime(at)).
+		Where("key_id = ?", keyID.String()).
+		Where("grace_ends > ?", dbTime(at)).
+		Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("keysmith/sqlite: end grace: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}

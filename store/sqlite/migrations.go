@@ -201,5 +201,25 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_key ON keysmith_rotations (key
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "rotation_hints_and_old_hash_index",
+			Version: "20260930000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+ALTER TABLE keysmith_rotations ADD COLUMN old_hint TEXT NOT NULL DEFAULT '';
+ALTER TABLE keysmith_rotations ADD COLUMN new_hint TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_old_hash ON keysmith_rotations (old_key_hash);
+`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `
+DROP INDEX IF EXISTS idx_keysmith_rotations_old_hash;
+ALTER TABLE keysmith_rotations DROP COLUMN old_hint;
+ALTER TABLE keysmith_rotations DROP COLUMN new_hint;
+`)
+				return err
+			},
+		},
 	)
 }

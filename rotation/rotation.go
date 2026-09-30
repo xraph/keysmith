@@ -31,11 +31,16 @@ type Record struct {
 	TenantID   string        `json:"tenant_id" db:"tenant_id"`
 	OldKeyHash string        `json:"-" db:"old_key_hash"`
 	NewKeyHash string        `json:"-" db:"new_key_hash"`
-	Reason     Reason        `json:"reason" db:"reason"`
-	GraceTTL   time.Duration `json:"grace_ttl" db:"grace_ttl_ms"`
-	GraceEnds  time.Time     `json:"grace_ends" db:"grace_ends"`
-	RotatedBy  string        `json:"rotated_by,omitempty" db:"rotated_by"`
-	CreatedAt  time.Time     `json:"created_at" db:"created_at"`
+	// OldHint and NewHint are the last four characters of each raw key, the
+	// same public hint key.Key carries. They are empty on records written
+	// before these fields existed.
+	OldHint   string        `json:"old_hint" db:"old_hint"`
+	NewHint   string        `json:"new_hint" db:"new_hint"`
+	Reason    Reason        `json:"reason" db:"reason"`
+	GraceTTL  time.Duration `json:"grace_ttl" db:"grace_ttl_ms"`
+	GraceEnds time.Time     `json:"grace_ends" db:"grace_ends"`
+	RotatedBy string        `json:"rotated_by,omitempty" db:"rotated_by"`
+	CreatedAt time.Time     `json:"created_at" db:"created_at"`
 }
 
 // ListFilter contains filters for listing rotation records.

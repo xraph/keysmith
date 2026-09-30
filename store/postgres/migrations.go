@@ -206,8 +206,29 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_grace ON keysmith_rotations (g
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "rotation_hints_and_old_hash_index",
+			Version: "20260930000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, rotationHintsSQL)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `DROP INDEX IF EXISTS idx_keysmith_rotations_old_hash;
+ALTER TABLE keysmith_rotations DROP COLUMN IF EXISTS old_hint;
+ALTER TABLE keysmith_rotations DROP COLUMN IF EXISTS new_hint;`)
+				return err
+			},
+		},
 	)
 }
+
+// rotationHintsSQL adds the old and new key hints to rotation records and an
+// index for looking a rotation up by the hash of the key it replaced. It runs
+// from both the grove migration group and migrationSQL, so keep them in step.
+const rotationHintsSQL = `ALTER TABLE keysmith_rotations ADD COLUMN IF NOT EXISTS old_hint TEXT NOT NULL DEFAULT '';
+ALTER TABLE keysmith_rotations ADD COLUMN IF NOT EXISTS new_hint TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_old_hash ON keysmith_rotations (old_key_hash);`
 
 // migrationSQL contains the raw SQL statements executed by the Store.Migrate
 // method for direct migration without the grove orchestrator. Each entry
@@ -344,4 +365,7 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_usage_agg_tenant ON keysmith_usage_agg (
 
 CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_key ON keysmith_rotations (key_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_grace ON keysmith_rotations (grace_ends) WHERE grace_ends IS NOT NULL;`,
+
+	// 006 rotation hints and old-hash index (same SQL as the grove migration)
+	rotationHintsSQL,
 }

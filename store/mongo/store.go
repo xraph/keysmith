@@ -157,6 +157,7 @@ func migrationIndexes() map[string][]mongod.IndexModel {
 		colRotations: {
 			{Keys: bson.D{{Key: "key_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "grace_ends", Value: 1}}},
+			{Keys: bson.D{{Key: "old_key_hash", Value: 1}}},
 		},
 	}
 }
