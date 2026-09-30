@@ -205,10 +205,20 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 		return nil, ErrKeyExpired
 	}
 
-	// Load policy for rate-limiting.
+	// Load the policy. A read failure fails closed: carrying on with a nil
+	// policy would skip the rate limit and hand the host a result it reads
+	// as "no restrictions". A policy that no longer exists (a dangling
+	// PolicyID) is not an outage, so the key validates without one.
 	var pol *policy.Policy
 	if k.PolicyID != nil {
-		pol, _ = e.store.Policies().Get(ctx, *k.PolicyID)
+		var polErr error
+		pol, polErr = e.store.Policies().Get(ctx, *k.PolicyID)
+		if polErr != nil {
+			if !errors.Is(polErr, ErrPolicyNotFound) {
+				return nil, fmt.Errorf("load policy: %w", polErr)
+			}
+			pol = nil
+		}
 	}
 
 	// Rate-limit check.
@@ -270,9 +280,16 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	case cfg.grace != nil:
 		graceTTL = *cfg.grace
 	case k.PolicyID != nil:
+		// A policy that is gone keeps the 24h default. Any other read
+		// failure stops the rotation, so the key is left as it was.
 		pol, polErr := e.store.Policies().Get(ctx, *k.PolicyID)
-		if polErr == nil && pol.GracePeriod > 0 {
-			graceTTL = pol.GracePeriod
+		switch {
+		case polErr == nil:
+			if pol.GracePeriod > 0 {
+				graceTTL = pol.GracePeriod
+			}
+		case !errors.Is(polErr, ErrPolicyNotFound):
+			return nil, fmt.Errorf("get policy: %w", polErr)
 		}
 	}
 

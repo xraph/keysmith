@@ -12,6 +12,9 @@ type Store interface {
 	Record(ctx context.Context, rec *Record) error
 	RecordBatch(ctx context.Context, recs []*Record) error
 	Query(ctx context.Context, filter *QueryFilter) ([]*Record, error)
+	// Aggregate buckets recorded usage by filter.Period. It ignores
+	// filter.Limit and filter.Offset, so bound the range with filter.After
+	// and filter.Before.
 	Aggregate(ctx context.Context, filter *QueryFilter) ([]*Aggregation, error)
 	Count(ctx context.Context, filter *QueryFilter) (int64, error)
 	Purge(ctx context.Context, before time.Time) (int64, error)

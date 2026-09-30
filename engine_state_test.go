@@ -2,6 +2,7 @@ package keysmith_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -149,5 +150,74 @@ func TestMaxKeyLifetimeCapsAnExplicitExpiry(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, r.Key.ExpiresAt)
 		assert.WithinDuration(t, time.Now().Add(24*time.Hour), *r.Key.ExpiresAt, 5*time.Second)
+	})
+}
+
+// failingPolicies fails every policy read with an error that is not
+// not-found, the way a dropped connection would.
+type failingPolicies struct{ policy.Store }
+
+func (failingPolicies) Get(context.Context, id.PolicyID) (*policy.Policy, error) {
+	return nil, errors.New("injected: policy store unavailable")
+}
+
+// failPolicyGet is a store whose policy reads fail.
+type failPolicyGet struct{ store.Store }
+
+func (s failPolicyGet) Policies() policy.Store { return failingPolicies{s.Store.Policies()} }
+
+// A key's policy carries its restrictions. If it cannot be read, validation
+// and rotation must fail rather than carry on as if there were none. A
+// policy that is simply gone keeps today's behaviour. Memory only: this is a
+// fault-injection wrapper, not a backend property.
+func TestPolicyReadFailureFailsClosed(t *testing.T) {
+	s := memory.New()
+	eng, ctx := newEngine(t, s)
+	pol := &policy.Policy{Name: "p", GracePeriod: 2 * time.Hour}
+	require.NoError(t, eng.CreatePolicy(ctx, pol))
+	orig := mustCreate(t, eng, ctx, &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, PolicyID: &pol.ID})
+
+	broken, _ := newEngine(t, failPolicyGet{s})
+	vr, err := broken.ValidateKey(ctx, orig.RawKey)
+	require.Error(t, err, "validation must not succeed without the policy")
+	assert.Nil(t, vr)
+
+	_, err = broken.RotateKey(ctx, orig.Key.ID, rotation.ReasonManual)
+	require.Error(t, err)
+	k, err := eng.GetKey(ctx, orig.Key.ID)
+	require.NoError(t, err)
+	assert.Equal(t, orig.Key.KeyHash, k.KeyHash, "a refused rotation leaves the hash alone")
+	vr, err = eng.ValidateKey(ctx, orig.RawKey)
+	require.NoError(t, err)
+	assert.False(t, vr.ViaPreviousKey)
+
+	// A dangling PolicyID: the policy was deleted underneath the key.
+	require.NoError(t, s.Policies().Delete(ctx, pol.ID))
+	vr, err = eng.ValidateKey(ctx, orig.RawKey)
+	require.NoError(t, err, "a missing policy still validates")
+	assert.Nil(t, vr.Policy)
+	_, err = eng.RotateKey(ctx, orig.Key.ID, rotation.ReasonManual)
+	require.NoError(t, err, "a missing policy still rotates")
+	recs, err := eng.ListRotations(ctx, &rotation.ListFilter{KeyID: &orig.Key.ID})
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, 24*time.Hour, recs[0].GraceTTL, "and falls back to the 24h default")
+}
+
+// Every backend's missing-policy error must read as not-found, or a
+// dangling PolicyID would now fail validation.
+func TestDanglingPolicyStillValidatesAndRotates(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		pol := &policy.Policy{Name: "p", GracePeriod: 2 * time.Hour}
+		require.NoError(t, eng.CreatePolicy(ctx, pol))
+		r := mustCreate(t, eng, ctx, &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, PolicyID: &pol.ID})
+		require.NoError(t, s.Policies().Delete(ctx, pol.ID))
+
+		vr, err := eng.ValidateKey(ctx, r.RawKey)
+		require.NoError(t, err)
+		assert.Nil(t, vr.Policy)
+		_, err = eng.RotateKey(ctx, r.Key.ID, rotation.ReasonManual)
+		require.NoError(t, err)
 	})
 }
