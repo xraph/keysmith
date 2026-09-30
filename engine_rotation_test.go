@@ -1,6 +1,8 @@
 package keysmith_test
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/xraph/keysmith/policy"
 	"github.com/xraph/keysmith/rotation"
 	"github.com/xraph/keysmith/store"
+	"github.com/xraph/keysmith/store/memory"
 )
 
 func TestOldKeyValidatesInsideTheWindow(t *testing.T) {
@@ -167,4 +170,36 @@ func TestLegacyRotationWithoutHintDoesNotReopen(t *testing.T) {
 		_, err = eng.ValidateKey(ctx, cur.RawKey)
 		assert.NoError(t, err, "the current key is unaffected")
 	})
+}
+
+// failingRotations fails every rotation write.
+type failingRotations struct{ rotation.Store }
+
+func (failingRotations) Create(context.Context, *rotation.Record) error {
+	return errors.New("injected: rotation write failed")
+}
+
+// failRotationCreate is a store whose rotation writes fail.
+type failRotationCreate struct{ store.Store }
+
+func (s failRotationCreate) Rotations() rotation.Store {
+	return failingRotations{s.Store.Rotations()}
+}
+
+// A rotation whose record cannot be written must leave the key as it was:
+// the caller never sees the new raw key, so the old one has to keep working.
+// Memory only: this is a fault-injection wrapper, not a backend property.
+func TestRotateLeavesTheKeyAloneWhenTheRecordFails(t *testing.T) {
+	eng, ctx := newEngine(t, failRotationCreate{memory.New()})
+	orig := mustCreate(t, eng, ctx, nil)
+
+	_, err := eng.RotateKey(ctx, orig.Key.ID, rotation.ReasonManual, keysmith.WithGrace(time.Hour))
+	require.Error(t, err)
+
+	vr, err := eng.ValidateKey(ctx, orig.RawKey)
+	require.NoError(t, err, "the original key must still validate")
+	assert.False(t, vr.ViaPreviousKey)
+	k, err := eng.GetKey(ctx, orig.Key.ID)
+	require.NoError(t, err)
+	assert.Equal(t, orig.Key.KeyHash, k.KeyHash)
 }

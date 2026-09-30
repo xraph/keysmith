@@ -278,29 +278,23 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 		return nil, fmt.Errorf("hash new key: %w", err)
 	}
 
-	oldHash := k.KeyHash
-	oldHint := k.Hint
 	now := time.Now()
+	newHint := rawKey[len(rawKey)-4:]
 
-	// Update the key record with the new hash.
-	k.KeyHash = newHash
-	k.Hint = rawKey[len(rawKey)-4:]
-	k.RotatedAt = &now
-	k.UpdatedAt = now
-
-	if err := e.store.Keys().Update(ctx, k); err != nil {
-		return nil, fmt.Errorf("update key: %w", err)
-	}
-
-	// Record the rotation.
+	// Record the rotation before touching the key. Until the key update
+	// lands, the old hash is still the key's current hash, so GetByHash
+	// finds it and callers on the old key never fall into a gap. If the key
+	// update then fails, the record stays as a history row the fallback
+	// cannot reach: it only runs for a hash that is no key's current hash,
+	// and the old hash still is one.
 	rec := &rotation.Record{
 		ID:         id.NewRotationID(),
 		KeyID:      k.ID,
 		TenantID:   k.TenantID,
-		OldKeyHash: oldHash,
+		OldKeyHash: k.KeyHash,
 		NewKeyHash: newHash,
-		OldHint:    oldHint,
-		NewHint:    k.Hint,
+		OldHint:    k.Hint,
+		NewHint:    newHint,
 		RotatedBy:  cfg.rotatedBy,
 		Reason:     reason,
 		GraceTTL:   graceTTL,
@@ -309,6 +303,15 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	}
 	if err := e.store.Rotations().Create(ctx, rec); err != nil {
 		return nil, fmt.Errorf("record rotation: %w", err)
+	}
+
+	k.KeyHash = newHash
+	k.Hint = newHint
+	k.RotatedAt = &now
+	k.UpdatedAt = now
+
+	if err := e.store.Keys().Update(ctx, k); err != nil {
+		return nil, fmt.Errorf("update key: %w", err)
 	}
 
 	_ = e.hooks.FireKeyRotated(ctx, k, rec)
