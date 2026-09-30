@@ -34,12 +34,14 @@ type KeySummary struct {
 	UpdatedAt      string   `json:"updatedAt"`
 }
 
-// PolicyRef is the slice of a policy a key's page needs.
+// PolicyRef is the slice of a policy a key's page needs. The engine reads a
+// zero grace as "not set" (RotateKey then uses 24h) and a zero lifetime as
+// "no maximum", so both go out as an explicit null, never as 0.
 type PolicyRef struct {
 	ID                    string `json:"id"`
 	Name                  string `json:"name"`
-	MaxKeyLifetimeSeconds int64  `json:"maxKeyLifetimeSeconds"`
-	GraceSeconds          int64  `json:"graceSeconds"`
+	MaxKeyLifetimeSeconds *int64 `json:"maxKeyLifetimeSeconds"`
+	GraceSeconds          *int64 `json:"graceSeconds"`
 }
 
 // PreviousKey is an open rotation window: the old key still validates until
@@ -106,9 +108,18 @@ func projectPolicyRef(p *policy.Policy) PolicyRef {
 	return PolicyRef{
 		ID:                    p.ID.String(),
 		Name:                  p.Name,
-		MaxKeyLifetimeSeconds: int64(p.MaxKeyLifetime / time.Second),
-		GraceSeconds:          int64(p.GracePeriod / time.Second),
+		MaxKeyLifetimeSeconds: secondsOrNil(p.MaxKeyLifetime),
+		GraceSeconds:          secondsOrNil(p.GracePeriod),
 	}
+}
+
+// secondsOrNil is nil for a zero duration, which the engine treats as unset.
+func secondsOrNil(d time.Duration) *int64 {
+	if d == 0 {
+		return nil
+	}
+	s := int64(d / time.Second)
+	return &s
 }
 
 func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }

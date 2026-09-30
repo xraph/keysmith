@@ -150,8 +150,10 @@ func TestKeyDetailCarriesScopesPolicyAndPendingExpiry(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"read"}, out.Key.Scopes)
 		require.NotNil(t, out.Policy)
-		assert.EqualValues(t, 7200, out.Policy.GraceSeconds)
-		assert.EqualValues(t, 720*3600, out.Policy.MaxKeyLifetimeSeconds)
+		require.NotNil(t, out.Policy.GraceSeconds)
+		require.NotNil(t, out.Policy.MaxKeyLifetimeSeconds)
+		assert.EqualValues(t, 7200, *out.Policy.GraceSeconds)
+		assert.EqualValues(t, 720*3600, *out.Policy.MaxKeyLifetimeSeconds)
 
 		past := time.Now().Add(-time.Minute)
 		old := create(t, eng, "t1", &keysmith.CreateKeyInput{Name: "old", Prefix: "sk", Environment: key.EnvLive, ExpiresAt: &past})
