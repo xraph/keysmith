@@ -12,6 +12,7 @@ import (
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
 	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/rotation"
 	"github.com/xraph/keysmith/store"
 	"github.com/xraph/keysmith/store/memory"
 )
@@ -93,4 +94,28 @@ func TestRateLimiterConfigured(t *testing.T) {
 	with, err := keysmith.NewEngine(keysmith.WithStore(memory.New()), keysmith.WithRateLimiter(allowAll{}))
 	require.NoError(t, err)
 	assert.True(t, with.RateLimiterConfigured())
+}
+
+// A rotate or suspend racing a revoke can write an older row back over the
+// revoked one. Until updates are conditional, revoked_at is the authority:
+// once it is set, the key is dead whatever state says.
+func TestRevokedAtWinsOverAStaleState(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		r := mustCreate(t, eng, ctx, nil)
+		require.NoError(t, eng.RevokeKey(ctx, r.Key.ID, "gone"))
+		// Simulate a stale write that put state back but left revoked_at.
+		require.NoError(t, s.Keys().UpdateState(ctx, r.Key.ID, key.StateActive))
+		k, err := s.Keys().Get(ctx, r.Key.ID)
+		require.NoError(t, err)
+		require.Equal(t, key.StateActive, k.State)
+		require.NotNil(t, k.RevokedAt)
+
+		_, err = eng.ValidateKey(ctx, r.RawKey)
+		assert.ErrorIs(t, err, keysmith.ErrKeyInactive)
+		assert.ErrorIs(t, eng.SuspendKey(ctx, r.Key.ID), keysmith.ErrInvalidStateTransition)
+		assert.ErrorIs(t, eng.ReactivateKey(ctx, r.Key.ID), keysmith.ErrInvalidStateTransition)
+		_, err = eng.RotateKey(ctx, r.Key.ID, rotation.ReasonManual)
+		assert.ErrorIs(t, err, keysmith.ErrInvalidStateTransition)
+	})
 }

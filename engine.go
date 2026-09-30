@@ -183,8 +183,10 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 	}
 
 	// Check state. Suspended, revoked and expired keys fail here whichever
-	// hash the caller presented.
-	if k.State != key.StateActive {
+	// hash the caller presented. RevokedAt is final even when State says
+	// otherwise: a stale full-row write racing a revoke can put State back
+	// and leave RevokedAt set.
+	if k.State != key.StateActive || k.RevokedAt != nil {
 		_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, ErrKeyInactive)
 		return nil, ErrKeyInactive
 	}
@@ -239,13 +241,13 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 // keeps validating until its grace window ends. The window comes from
 // WithGrace if given, else the key's policy GracePeriod, else 24 hours. A
 // window of zero stops the previous key at once. A revoked or expired key
-// cannot be rotated.
+// cannot be rotated, and a key with RevokedAt set counts as revoked.
 func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, opts ...RotateOption) (*key.CreateResult, error) {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("get key: %w", err)
 	}
-	if k.State == key.StateRevoked || k.State == key.StateExpired ||
+	if k.State == key.StateRevoked || k.State == key.StateExpired || k.RevokedAt != nil ||
 		(k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt)) {
 		return nil, ErrInvalidStateTransition
 	}
@@ -362,13 +364,14 @@ func (e *Engine) EndGrace(ctx context.Context, keyID id.KeyID) (int64, error) {
 }
 
 // SuspendKey temporarily disables an active key. Only an active key can be
-// suspended; anything else, a revoked key above all, is refused.
+// suspended; anything else, a revoked key above all, is refused. A key with
+// RevokedAt set is revoked whatever its State says.
 func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return fmt.Errorf("get key: %w", err)
 	}
-	if k.State != key.StateActive {
+	if k.State != key.StateActive || k.RevokedAt != nil {
 		return ErrInvalidStateTransition
 	}
 	if err := e.store.Keys().UpdateState(ctx, keyID, key.StateSuspended); err != nil {
@@ -379,13 +382,14 @@ func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
 	return nil
 }
 
-// ReactivateKey re-enables a suspended key.
+// ReactivateKey re-enables a suspended key. A key with RevokedAt set is
+// revoked whatever its State says, and stays that way.
 func (e *Engine) ReactivateKey(ctx context.Context, keyID id.KeyID) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return fmt.Errorf("get key: %w", err)
 	}
-	if k.State != key.StateSuspended {
+	if k.State != key.StateSuspended || k.RevokedAt != nil {
 		return ErrInvalidStateTransition
 	}
 	if err := e.store.Keys().UpdateState(ctx, keyID, key.StateActive); err != nil {
