@@ -12,14 +12,12 @@ import (
 	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
-	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/vessel"
 
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/api"
-	ksdash "github.com/xraph/keysmith/dashboard"
 	kscontract "github.com/xraph/keysmith/extension/contract"
 	"github.com/xraph/keysmith/plugin"
 	"github.com/xraph/keysmith/store"
@@ -195,17 +193,6 @@ func (e *Extension) Handler() http.Handler {
 		return http.NotFoundHandler()
 	}
 	return e.apiHandler.Handler()
-}
-
-// DashboardContributor implements dashboard.DashboardAware. It returns a
-// LocalContributor that renders keysmith pages, widgets, and settings in the
-// Forge dashboard using templ + ForgeUI.
-func (e *Extension) DashboardContributor() contributor.LocalContributor {
-	return ksdash.New(
-		ksdash.NewManifest(e.exts),
-		e.eng,
-		e.exts,
-	)
 }
 
 // --- Config Loading (mirrors grove extension pattern) ---
