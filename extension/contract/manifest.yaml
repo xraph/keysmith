@@ -12,6 +12,8 @@ contributor:
 intents:
   - { name: keys.list,   kind: query, version: 1, capability: read }
   - { name: keys.detail, kind: query, version: 1, capability: read }
+  - { name: policies.list, kind: query, version: 1, capability: read }
+  - { name: scopes.list,   kind: query, version: 1, capability: read }
 
 queries:
   keysList:
@@ -19,4 +21,10 @@ queries:
     cache: { staleTime: 30s }
   keyDetail:
     intent: keys.detail
+    cache: { staleTime: 30s }
+  policiesList:
+    intent: policies.list
+    cache: { staleTime: 30s }
+  scopesList:
+    intent: scopes.list
     cache: { staleTime: 30s }

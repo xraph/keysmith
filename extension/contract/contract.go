@@ -84,6 +84,12 @@ func Register(
 		{"keys.detail", func() error {
 			return dispatcher.RegisterQuery(d, c, "keys.detail", 1, keysDetailHandler(deps))
 		}},
+		{"policies.list", func() error {
+			return dispatcher.RegisterQuery(d, c, "policies.list", 1, policiesListHandler(deps))
+		}},
+		{"scopes.list", func() error {
+			return dispatcher.RegisterQuery(d, c, "scopes.list", 1, scopesListHandler(deps))
+		}},
 	} {
 		if err := bind.fn(); err != nil {
 			return fmt.Errorf("keysmith/contract: bind %s: %w", bind.intent, err)

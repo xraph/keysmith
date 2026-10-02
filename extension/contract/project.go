@@ -44,6 +44,25 @@ type PolicyRef struct {
 	GraceSeconds          *int64 `json:"graceSeconds"`
 }
 
+// PolicySummary is a policy as the key forms' picker shows it. Grace and
+// lifetime follow PolicyRef: an unset value goes out as an explicit null.
+type PolicySummary struct {
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Description           string   `json:"description,omitempty"`
+	MaxKeyLifetimeSeconds *int64   `json:"maxKeyLifetimeSeconds"`
+	GraceSeconds          *int64   `json:"graceSeconds"`
+	AllowedScopes         []string `json:"allowedScopes"` // never nil
+}
+
+// ScopeSummary is a scope as the key forms' picker shows it.
+type ScopeSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Parent      string `json:"parent,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 // PreviousKey is an open rotation window: the old key still validates until
 // GraceEnds. Only the old key's hint is shown.
 type PreviousKey struct {
@@ -110,6 +129,21 @@ func projectPolicyRef(p *policy.Policy) PolicyRef {
 		Name:                  p.Name,
 		MaxKeyLifetimeSeconds: secondsOrNil(p.MaxKeyLifetime),
 		GraceSeconds:          secondsOrNil(p.GracePeriod),
+	}
+}
+
+func projectPolicySummary(p *policy.Policy) PolicySummary {
+	allowed := p.AllowedScopes
+	if allowed == nil {
+		allowed = []string{}
+	}
+	return PolicySummary{
+		ID:                    p.ID.String(),
+		Name:                  p.Name,
+		Description:           p.Description,
+		MaxKeyLifetimeSeconds: secondsOrNil(p.MaxKeyLifetime),
+		GraceSeconds:          secondsOrNil(p.GracePeriod),
+		AllowedScopes:         allowed,
 	}
 }
 
