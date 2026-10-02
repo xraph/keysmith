@@ -14,12 +14,15 @@ intents:
   - { name: keys.detail, kind: query, version: 1, capability: read }
   - { name: policies.list, kind: query, version: 1, capability: read }
   - { name: scopes.list,   kind: query, version: 1, capability: read }
-  # The one response that carries a raw key, once. overview and policies.detail
+  # Answers a raw key, once (keys.rotate is the other). overview and policies.detail
   # arrive in later slices; the loader does not check invalidates names.
   - { name: keys.create, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview, policies.detail] }
-  # The second response that carries a raw key, once.
+  # Answers a raw key, once.
   - { name: keys.rotate, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, rotations.list, overview] }
   - { name: keys.endGrace, kind: command, version: 1, capability: write, invalidates: [keys.detail, rotations.list, overview] }
+  - { name: keys.revoke, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, rotations.list, overview] }
+  - { name: keys.suspend, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview] }
+  - { name: keys.reactivate, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview] }
 
 queries:
   keysList:

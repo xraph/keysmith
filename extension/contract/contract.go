@@ -99,6 +99,15 @@ func Register(
 		{"keys.endGrace", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.endGrace", 1, keysEndGraceHandler(deps))
 		}},
+		{"keys.revoke", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.revoke", 1, keysRevokeHandler(deps))
+		}},
+		{"keys.suspend", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.suspend", 1, keysSuspendHandler(deps))
+		}},
+		{"keys.reactivate", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.reactivate", 1, keysReactivateHandler(deps))
+		}},
 	} {
 		if err := bind.fn(); err != nil {
 			return fmt.Errorf("keysmith/contract: bind %s: %w", bind.intent, err)
