@@ -58,12 +58,19 @@ func loadKeyForTenant(ctx context.Context, deps Deps, tenant, rawID string) (*ke
 // stopped at 100 and could hide a still-valid previous key.
 func listOpenWindows(ctx context.Context, eng *keysmith.Engine, keyID id.KeyID, now time.Time) ([]PreviousKey, error) {
 	var open []*rotation.Record
+	// A rotation inserted while this pages shifts the offsets, so a record
+	// can land on two pages. Count each one once.
+	seen := map[string]bool{}
 	for offset := 0; ; offset += openWindowPage {
 		recs, err := eng.ListRotations(ctx, &rotation.ListFilter{KeyID: &keyID, Limit: openWindowPage, Offset: offset})
 		if err != nil {
 			return nil, err
 		}
 		for _, r := range recs {
+			if seen[r.ID.String()] {
+				continue
+			}
+			seen[r.ID.String()] = true
 			// Records written before the grace fix have no old hint and must
 			// never read as an open window.
 			if r.OldHint != "" && r.GraceEnds.After(now) {

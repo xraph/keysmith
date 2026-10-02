@@ -8,7 +8,7 @@ contributor:
 
 # No app block and no graph: the React plugin owns routes. Every intent is
 # answered for the tenant tenantFrom resolves; no request field names a
-# tenant, and no response carries a key hash. Only keys.create returns a raw key.
+# tenant, and no response carries a key hash. Only keys.create and keys.rotate return a raw key.
 intents:
   - { name: keys.list,   kind: query, version: 1, capability: read }
   - { name: keys.detail, kind: query, version: 1, capability: read }
@@ -17,6 +17,9 @@ intents:
   # The one response that carries a raw key, once. overview and policies.detail
   # arrive in later slices; the loader does not check invalidates names.
   - { name: keys.create, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview, policies.detail] }
+  # The second response that carries a raw key, once.
+  - { name: keys.rotate, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, rotations.list, overview] }
+  - { name: keys.endGrace, kind: command, version: 1, capability: write, invalidates: [keys.detail, rotations.list, overview] }
 
 queries:
   keysList:

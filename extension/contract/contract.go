@@ -93,6 +93,12 @@ func Register(
 		{"keys.create", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps))
 		}},
+		{"keys.rotate", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.rotate", 1, keysRotateHandler(deps))
+		}},
+		{"keys.endGrace", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.endGrace", 1, keysEndGraceHandler(deps))
+		}},
 	} {
 		if err := bind.fn(); err != nil {
 			return fmt.Errorf("keysmith/contract: bind %s: %w", bind.intent, err)
