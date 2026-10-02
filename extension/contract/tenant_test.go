@@ -66,3 +66,20 @@ func TestAppFromMayBeEmptyButNeverWrong(t *testing.T) {
 	_, err = appFrom(user(map[string]any{"app_id": 7}), Deps{DefaultAppID: "app_1"})
 	assert.Equal(t, dashcontract.CodePermissionDenied, codeOf(t, err))
 }
+
+func TestAppFromEdges(t *testing.T) {
+	// A present-but-empty claim refuses even when a default exists to fall back on.
+	for _, deps := range []Deps{{}, {DefaultAppID: "app_1"}} {
+		got, err := appFrom(user(map[string]any{"app_id": ""}), deps)
+		assert.Equal(t, dashcontract.CodePermissionDenied, codeOf(t, err))
+		assert.Empty(t, got)
+	}
+	// A claim of the wrong type refuses with no default too.
+	got, err := appFrom(user(map[string]any{"app_id": 7}), Deps{})
+	assert.Equal(t, dashcontract.CodePermissionDenied, codeOf(t, err))
+	assert.Empty(t, got)
+	// Absent with no default is the empty app, not an error.
+	got, err = appFrom(user(map[string]any{"other": "x"}), Deps{})
+	require.NoError(t, err)
+	assert.Equal(t, "", got)
+}

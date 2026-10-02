@@ -195,7 +195,9 @@ func TestKeyDetailHidesAnotherTenantsPolicyAndADanglingOne(t *testing.T) {
 			"a policy that does not exist": id.NewPolicyID(),
 		} {
 			r := create(t, eng, "t1", nil)
-			// Written straight to the store: CreateKey would refuse both.
+			// Written straight to the store. CreateKey refuses a policy that does not
+			// exist but not another tenant's, so the contract is the only guard
+			// against showing a foreign policy.
 			k, err := s.Keys().Get(context.Background(), r.Key.ID)
 			require.NoError(t, err)
 			p := pid

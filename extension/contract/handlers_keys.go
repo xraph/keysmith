@@ -12,16 +12,11 @@ import (
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/key"
-	"github.com/xraph/keysmith/rotation"
 )
 
 const (
 	defaultListLimit = 25
 	maxListLimit     = 100
-
-	// maxRotationsRead bounds how many rotation records the detail page reads
-	// when looking for open windows.
-	maxRotationsRead = 100
 )
 
 type keysListRequest struct {
@@ -52,7 +47,7 @@ func badRequest(message string) error {
 	return &dashcontract.Error{Code: dashcontract.CodeBadRequest, Message: message}
 }
 
-// keyNotFound is the one error the detail handler returns for a key that does
+// keyNotFound is the one error every by-ID handler returns for a key that does
 // not exist and for a key that belongs to another tenant, so the two cannot
 // be told apart.
 func keyNotFound() error {
@@ -153,22 +148,9 @@ func keysDetailHandler(deps Deps) func(context.Context, keysDetailRequest, dashc
 		if err != nil {
 			return keysDetailResponse{}, err
 		}
-		if in.ID == "" {
-			return keysDetailResponse{}, badRequest("id is required")
-		}
-		kid, err := id.ParseKeyID(in.ID)
+		k, err := loadKeyForTenant(ctx, deps, tenant, in.ID)
 		if err != nil {
-			return keysDetailResponse{}, badRequest("id is not a key id")
-		}
-		k, err := deps.Engine.GetKey(ctx, kid)
-		if err != nil {
-			if errors.Is(err, keysmith.ErrKeyNotFound) {
-				return keysDetailResponse{}, keyNotFound()
-			}
-			return keysDetailResponse{}, deps.mapError("keys.detail", err)
-		}
-		if k.TenantID != tenant {
-			return keysDetailResponse{}, keyNotFound()
+			return keysDetailResponse{}, err
 		}
 
 		names, err := scopeNames(ctx, deps.Engine, k.ID)
@@ -199,28 +181,11 @@ func keysDetailHandler(deps Deps) func(context.Context, keysDetailRequest, dashc
 			// A policy from another tenant is never shown.
 		}
 
-		recs, err := deps.Engine.ListRotations(ctx, &rotation.ListFilter{KeyID: &k.ID, Limit: maxRotationsRead})
+		windows, err := listOpenWindows(ctx, deps.Engine, k.ID, now)
 		if err != nil {
 			return keysDetailResponse{}, deps.mapError("keys.detail", err)
 		}
-		open := make([]*rotation.Record, 0, len(recs))
-		for _, r := range recs {
-			// Records written before the grace fix have no old hint and must
-			// never read as an open window.
-			if r.OldHint != "" && r.GraceEnds.After(now) {
-				open = append(open, r)
-			}
-		}
-		sort.Slice(open, func(i, j int) bool { return open[i].GraceEnds.Before(open[j].GraceEnds) })
-		for _, r := range open {
-			out.PreviousKeys = append(out.PreviousKeys, PreviousKey{
-				RotationID: r.ID.String(),
-				Hint:       r.OldHint,
-				Reason:     string(r.Reason),
-				RotatedAt:  rfc3339(r.CreatedAt),
-				GraceEnds:  rfc3339(r.GraceEnds),
-			})
-		}
+		out.PreviousKeys = windows
 		return out, nil
 	}
 }
