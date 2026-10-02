@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +65,9 @@ func scopeNameFromError(err error) (string, bool) {
 // stays generic.
 func (d Deps) mapCreateError(intent string, err error) error {
 	switch {
+	case errors.Is(err, keysmith.ErrPolicyNotFound):
+		// The policy went away between the handler's check and the engine's read.
+		return badRequest("policy not found")
 	case errors.Is(err, keysmith.ErrScopeNotFound):
 		if name, ok := scopeNameFromError(err); ok {
 			return badRequest("scope " + strconv.Quote(name) + " does not exist in this tenant")
@@ -159,12 +163,13 @@ func keysCreateHandler(deps Deps) func(context.Context, keysCreateRequest, dashc
 			return keyWithSecretResponse{}, deps.mapCreateError(intent, err)
 		}
 
-		names, err := scopeNames(ctx, deps.Engine, created.Key.ID)
-		if err != nil {
-			// The key exists but its raw key cannot be shown now. mapError logs
-			// the cause; the caller sees only the generic error.
-			return keyWithSecretResponse{}, deps.mapError(intent, err)
-		}
+		// Nothing that can fail may sit between a successful CreateKey and this
+		// return: a failure here would lose the raw key and leave a live key
+		// nobody holds. The engine returns nil only after every name resolved
+		// in this tenant and was assigned, so the stored set is the input with
+		// duplicates removed. created.Key.Scopes is the raw input, duplicates
+		// included, so it is not used.
+		names := slices.Compact(slices.Sorted(slices.Values(in.Scopes)))
 		return keyWithSecretResponse{
 			Key:    projectKey(created.Key, names, time.Now()),
 			RawKey: created.RawKey,

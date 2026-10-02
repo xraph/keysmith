@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 
+	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
 	"github.com/xraph/keysmith/key"
@@ -22,11 +24,11 @@ import (
 	"github.com/xraph/keysmith/store/memory"
 )
 
-var keyListFilterForTenant = key.ListFilter{TenantID: "t1"}
+var createTenantFilter = key.ListFilter{TenantID: "t1"}
 
-func newMemoryStore() store.Store { return memory.New() }
+func createMemoryStore() store.Store { return memory.New() }
 
-func mustKeyID(t *testing.T, s string) id.ID {
+func createMustKeyID(t *testing.T, s string) id.ID {
 	t.Helper()
 	kid, err := id.ParseKeyID(s)
 	require.NoError(t, err)
@@ -35,13 +37,13 @@ func mustKeyID(t *testing.T, s string) id.ID {
 
 func policyIDString() string { return id.NewPolicyID().String() }
 
-type plainError string
+type createPlainError string
 
-func (e plainError) Error() string { return string(e) }
+func (e createPlainError) Error() string { return string(e) }
 
-func wrapped(msg string) error { return plainError(msg) }
+func createPlainErr(msg string) error { return createPlainError(msg) }
 
-func newTestDispatcher(t *testing.T, deps Deps) *dispatcher.Dispatcher {
+func createTestDispatcher(t *testing.T, deps Deps) *dispatcher.Dispatcher {
 	t.Helper()
 	d := dispatcher.New(nil)
 	require.NoError(t, Register(d, dashcontract.NewRegistry(), dashcontract.NewWardenRegistry(), deps))
@@ -70,7 +72,7 @@ func TestKeysCreateStoresTheResolvedTenantAndSubject(t *testing.T) {
 		out, err := keysCreateHandler(deps)(context.Background(), validCreate(), p)
 		require.NoError(t, err)
 
-		stored, err := s.Keys().Get(context.Background(), mustKeyID(t, out.Key.ID))
+		stored, err := s.Keys().Get(context.Background(), createMustKeyID(t, out.Key.ID))
 		require.NoError(t, err)
 		assert.Equal(t, "t1", stored.TenantID)
 		assert.Equal(t, "user_1", stored.CreatedBy)
@@ -82,7 +84,7 @@ func TestKeysCreateStoresTheResolvedTenantAndSubject(t *testing.T) {
 		assert.Equal(t, []string{}, out.Key.Scopes)
 
 		// And it is visible to that tenant, not to the default one.
-		_, err = eng.GetKey(tctx("t1"), mustKeyID(t, out.Key.ID))
+		_, err = eng.GetKey(tctx("t1"), createMustKeyID(t, out.Key.ID))
 		require.NoError(t, err)
 	})
 }
@@ -92,7 +94,7 @@ func TestKeysCreateDefaultTenantAndSubject(t *testing.T) {
 		deps, _ := setup(t, s)
 		out, err := keysCreateHandler(deps)(context.Background(), validCreate(), principal())
 		require.NoError(t, err)
-		stored, err := s.Keys().Get(context.Background(), mustKeyID(t, out.Key.ID))
+		stored, err := s.Keys().Get(context.Background(), createMustKeyID(t, out.Key.ID))
 		require.NoError(t, err)
 		assert.Equal(t, "t1", stored.TenantID)
 		assert.Equal(t, "user_1", stored.CreatedBy)
@@ -139,7 +141,7 @@ func TestKeysCreateRefusesAnotherTenantsPolicyAndARandomOneIdentically(t *testin
 		assert.Equal(t, errForeign, errRandom, "a foreign ID must look exactly like a missing one")
 
 		// Nothing was written.
-		total, err := s.Keys().Count(context.Background(), &keyListFilterForTenant)
+		total, err := s.Keys().Count(context.Background(), &createTenantFilter)
 		require.NoError(t, err)
 		assert.Zero(t, total)
 	})
@@ -159,7 +161,7 @@ func TestKeysCreateWithAnOwnPolicy(t *testing.T) {
 }
 
 func TestKeysCreateValidationMessages(t *testing.T) {
-	deps, _ := setup(t, newMemoryStore())
+	deps, _ := setup(t, createMemoryStore())
 	cases := []struct {
 		name   string
 		mutate func(*keysCreateRequest)
@@ -196,7 +198,7 @@ const (
 )
 
 func TestKeysCreateValidationOrder(t *testing.T) {
-	deps, _ := setup(t, newMemoryStore())
+	deps, _ := setup(t, createMemoryStore())
 	// Everything is wrong at once: the first rule in the list answers.
 	in := keysCreateRequest{Name: "", Environment: "x", Prefix: "X", ExpiresAt: "x", PolicyID: "x"}
 	_, err := keysCreateHandler(deps)(context.Background(), in, principal())
@@ -227,7 +229,7 @@ func TestKeysCreateNameBoundaryAndTrimming(t *testing.T) {
 }
 
 func TestKeysCreateRefusesWithoutAUserOrTenant(t *testing.T) {
-	deps, _ := setup(t, newMemoryStore())
+	deps, _ := setup(t, createMemoryStore())
 	_, err := keysCreateHandler(deps)(context.Background(), validCreate(), dashcontract.Principal{})
 	assert.Equal(t, dashcontract.CodeUnauthenticated, codeOf(t, err))
 
@@ -262,7 +264,7 @@ func TestKeysCreateScopeErrors(t *testing.T) {
 		assert.Equal(t, "a scope is outside this policy's allowed scopes", badRequestMessage(t, err))
 
 		// A refused create leaves nothing behind.
-		total, err := s.Keys().Count(context.Background(), &keyListFilterForTenant)
+		total, err := s.Keys().Count(context.Background(), &createTenantFilter)
 		require.NoError(t, err)
 		assert.Zero(t, total)
 
@@ -274,12 +276,12 @@ func TestKeysCreateScopeErrors(t *testing.T) {
 }
 
 func TestScopeNameFromError(t *testing.T) {
-	name, ok := scopeNameFromError(wrapped(`scope "a \"b\"": keysmith: scope not found`))
+	name, ok := scopeNameFromError(createPlainErr(`scope "a \"b\"": keysmith: scope not found`))
 	assert.True(t, ok)
 	assert.Equal(t, `a "b"`, name)
-	_, ok = scopeNameFromError(wrapped("keysmith: scope not found"))
+	_, ok = scopeNameFromError(createPlainErr("keysmith: scope not found"))
 	assert.False(t, ok)
-	_, ok = scopeNameFromError(wrapped(`scope unquoted: x`))
+	_, ok = scopeNameFromError(createPlainErr(`scope unquoted: x`))
 	assert.False(t, ok)
 }
 
@@ -301,8 +303,8 @@ func TestKeysCreateLifetimeExceeded(t *testing.T) {
 }
 
 func TestKeysCreateUnexpectedEngineErrorStaysGeneric(t *testing.T) {
-	deps, _ := setup(t, newMemoryStore())
-	err := deps.mapCreateError("keys.create", wrapped("dial tcp 10.0.0.1: password=hunter2"))
+	deps, _ := setup(t, createMemoryStore())
+	err := deps.mapCreateError("keys.create", createPlainErr("dial tcp 10.0.0.1: password=hunter2"))
 	var ce *dashcontract.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, dashcontract.CodeInternal, ce.Code)
@@ -344,8 +346,8 @@ func TestKeysCreateThenListAndDetailNeverCarryTheRawKey(t *testing.T) {
 }
 
 func TestKeysCreateIsDispatchedAsAWriteCommand(t *testing.T) {
-	deps, _ := setup(t, newMemoryStore())
-	d := newTestDispatcher(t, deps)
+	deps, _ := setup(t, createMemoryStore())
+	d := createTestDispatcher(t, deps)
 	req := dashcontract.Request{
 		Envelope: "v1", Kind: dashcontract.KindCommand, Contributor: ContributorName,
 		Intent: "keys.create", IntentVersion: 1,
@@ -357,4 +359,27 @@ func TestKeysCreateIsDispatchedAsAWriteCommand(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.Equal(t, "via dispatch", out.Key.Name)
 	assert.True(t, strings.HasPrefix(out.RawKey, "ci_test_"))
+}
+
+func TestKeysCreateDuplicateScopesAreAnsweredOnce(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		mkScope(t, eng, "t1", "read", "")
+		in := validCreate()
+		in.Scopes = []string{"read", "read"}
+		out, err := keysCreateHandler(deps)(context.Background(), in, principal())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"read"}, out.Key.Scopes)
+
+		list, err := keysListHandler(deps)(context.Background(), keysListRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, list.Keys, 1)
+		assert.Equal(t, out.Key, list.Keys[0])
+	})
+}
+
+func TestKeysCreateMapsAPolicyDeletedMidFlightLikeAMissingOne(t *testing.T) {
+	deps, _ := setup(t, createMemoryStore())
+	err := deps.mapCreateError("keys.create", fmt.Errorf("get policy: %w", keysmith.ErrPolicyNotFound))
+	assert.Equal(t, "policy not found", badRequestMessage(t, err))
 }
