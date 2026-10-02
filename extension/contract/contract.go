@@ -90,6 +90,9 @@ func Register(
 		{"scopes.list", func() error {
 			return dispatcher.RegisterQuery(d, c, "scopes.list", 1, scopesListHandler(deps))
 		}},
+		{"keys.create", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps))
+		}},
 	} {
 		if err := bind.fn(); err != nil {
 			return fmt.Errorf("keysmith/contract: bind %s: %w", bind.intent, err)
