@@ -23,6 +23,8 @@ intents:
   - { name: keys.revoke, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, rotations.list, overview] }
   - { name: keys.suspend, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview] }
   - { name: keys.reactivate, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview] }
+  - { name: keys.scopes.assign, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail] }
+  - { name: keys.scopes.remove, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail] }
 
 queries:
   keysList:

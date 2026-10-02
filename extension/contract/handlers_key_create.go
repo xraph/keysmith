@@ -60,14 +60,11 @@ func scopeNameFromError(err error) (string, bool) {
 	return name, true
 }
 
-// mapCreateError answers the engine errors a create can hit with messages the
-// form can show. Anything else goes through mapError, so an unexpected error
-// stays generic.
-func (d Deps) mapCreateError(intent string, err error) error {
+// mapScopeError answers the scope errors the engine returns from a create or
+// an assignment with messages the form can show. Anything else goes through
+// mapError, so an unexpected error stays generic.
+func (d Deps) mapScopeError(intent string, err error) error {
 	switch {
-	case errors.Is(err, keysmith.ErrPolicyNotFound):
-		// The policy went away between the handler's check and the engine's read.
-		return badRequest("policy not found")
 	case errors.Is(err, keysmith.ErrScopeNotFound):
 		if name, ok := scopeNameFromError(err); ok {
 			return badRequest("scope " + strconv.Quote(name) + " does not exist in this tenant")
@@ -75,10 +72,22 @@ func (d Deps) mapCreateError(intent string, err error) error {
 		return badRequest("a scope does not exist in this tenant")
 	case errors.Is(err, keysmith.ErrScopeNotAllowed):
 		return badRequest("a scope is outside this policy's allowed scopes")
+	default:
+		return d.mapError(intent, err)
+	}
+}
+
+// mapCreateError answers the engine errors a create can hit with messages the
+// form can show. Scope errors go through mapScopeError.
+func (d Deps) mapCreateError(intent string, err error) error {
+	switch {
+	case errors.Is(err, keysmith.ErrPolicyNotFound):
+		// The policy went away between the handler's check and the engine's read.
+		return badRequest("policy not found")
 	case errors.Is(err, keysmith.ErrKeyLifetimeExceeded):
 		return badRequest("expiresAt is beyond this policy's maximum key lifetime")
 	default:
-		return d.mapError(intent, err)
+		return d.mapScopeError(intent, err)
 	}
 }
 

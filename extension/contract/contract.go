@@ -108,6 +108,12 @@ func Register(
 		{"keys.reactivate", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.reactivate", 1, keysReactivateHandler(deps))
 		}},
+		{"keys.scopes.assign", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.scopes.assign", 1, keysScopesAssignHandler(deps))
+		}},
+		{"keys.scopes.remove", func() error {
+			return dispatcher.RegisterCommand(d, c, "keys.scopes.remove", 1, keysScopesRemoveHandler(deps))
+		}},
 	} {
 		if err := bind.fn(); err != nil {
 			return fmt.Errorf("keysmith/contract: bind %s: %w", bind.intent, err)

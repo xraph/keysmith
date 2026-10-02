@@ -53,6 +53,7 @@ func keyStateChange(
 	allowed func(k *key.Key, now time.Time) bool,
 	apply func(ctx context.Context, kid id.KeyID) error,
 	validate func() error,
+	mapErr func(intent string, err error) error,
 ) (keyResponse, error) {
 	tenant, err := tenantFrom(p, deps)
 	if err != nil {
@@ -77,7 +78,7 @@ func keyStateChange(
 		if errors.Is(aerr, keysmith.ErrInvalidStateTransition) {
 			return keyResponse{}, stateConflict(conflict)
 		}
-		return keyResponse{}, deps.mapError(intent, aerr)
+		return keyResponse{}, mapErr(intent, aerr)
 	}
 	kid := k.ID
 	k, err = loadKeyForTenant(ctx, deps, tenant, kid.String())
@@ -110,7 +111,7 @@ func keysRevokeHandler(deps Deps) func(context.Context, keysRevokeRequest, dashc
 					return badRequest("reason must be at most 500 characters")
 				}
 				return nil
-			})
+			}, deps.mapError)
 	}
 }
 
@@ -123,7 +124,7 @@ func keysSuspendHandler(deps Deps) func(context.Context, keyIDRequest, dashcontr
 				state, _ := effectiveState(k, now)
 				return state == string(key.StateActive)
 			},
-			deps.Engine.SuspendKey, nil)
+			deps.Engine.SuspendKey, nil, deps.mapError)
 	}
 }
 
@@ -133,6 +134,6 @@ func keysReactivateHandler(deps Deps) func(context.Context, keyIDRequest, dashco
 			func(k *key.Key, _ time.Time) bool {
 				return k.State == key.StateSuspended && k.RevokedAt == nil
 			},
-			deps.Engine.ReactivateKey, nil)
+			deps.Engine.ReactivateKey, nil, deps.mapError)
 	}
 }
