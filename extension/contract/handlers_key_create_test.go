@@ -170,6 +170,8 @@ func TestKeysCreateValidationMessages(t *testing.T) {
 	}{
 		{"blank name", func(r *keysCreateRequest) { r.Name = "   " }, "name is required"},
 		{"name over 200", func(r *keysCreateRequest) { r.Name = strings.Repeat("a", 201) }, "name is too long"},
+		{"description over 1000", func(r *keysCreateRequest) { r.Description = strings.Repeat("a", 1001) }, "description is too long"},
+		{"description over 1000 runes", func(r *keysCreateRequest) { r.Description = strings.Repeat("é", 1001) }, "description is too long"},
 		{"environment empty", func(r *keysCreateRequest) { r.Environment = "" }, "environment must be one of live, test, staging"},
 		{"environment unknown", func(r *keysCreateRequest) { r.Environment = "prod" }, "environment must be one of live, test, staging"},
 		{"prefix empty", func(r *keysCreateRequest) { r.Prefix = "" }, prefixMsg},
@@ -226,6 +228,22 @@ func TestKeysCreateNameBoundaryAndTrimming(t *testing.T) {
 		out, err := keysCreateHandler(deps)(context.Background(), in, principal())
 		require.NoError(t, err)
 		assert.Equal(t, strings.Repeat("é", 200), out.Key.Name)
+	})
+}
+
+// The cap counts runes, not bytes, and the surrounding space is trimmed
+// before it is counted and before anything is stored.
+func TestKeysCreateDescriptionBoundaryAndTrimming(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, _ := setup(t, s)
+		in := validCreate()
+		in.Description = "  " + strings.Repeat("é", 1000) + "\n "
+		out, err := keysCreateHandler(deps)(context.Background(), in, principal())
+		require.NoError(t, err)
+		assert.Equal(t, strings.Repeat("é", 1000), out.Key.Description)
+		stored, err := s.Keys().Get(context.Background(), createMustKeyID(t, out.Key.ID))
+		require.NoError(t, err)
+		assert.Equal(t, strings.Repeat("é", 1000), stored.Description)
 	})
 }
 

@@ -17,7 +17,10 @@ import (
 	"github.com/xraph/keysmith/key"
 )
 
-const maxKeyNameLength = 200
+const (
+	maxKeyNameLength        = 200
+	maxKeyDescriptionLength = 1000
+)
 
 // keyPrefixPattern has no underscore on purpose. The default generator writes
 // prefix_environment_random, so an underscore in the prefix would make the
@@ -114,6 +117,10 @@ func keysCreateHandler(deps Deps) func(context.Context, keysCreateRequest, dashc
 		if utf8.RuneCountInString(name) > maxKeyNameLength {
 			return keyWithSecretResponse{}, badRequest("name is too long")
 		}
+		description := strings.TrimSpace(in.Description)
+		if utf8.RuneCountInString(description) > maxKeyDescriptionLength {
+			return keyWithSecretResponse{}, badRequest("description is too long")
+		}
 
 		switch in.Environment {
 		case string(key.EnvLive), string(key.EnvTest), string(key.EnvStaging):
@@ -159,7 +166,7 @@ func keysCreateHandler(deps Deps) func(context.Context, keysCreateRequest, dashc
 
 		created, err := deps.Engine.CreateKey(engineCtx(ctx, app, tenant), &keysmith.CreateKeyInput{
 			Name:        name,
-			Description: in.Description,
+			Description: description,
 			Prefix:      in.Prefix,
 			Environment: key.Environment(in.Environment),
 			PolicyID:    policyID,
