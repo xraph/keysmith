@@ -147,7 +147,11 @@ type policyList struct {
 // description, negative numbers, caps, rate-limit pairings, lists. Every
 // failure is BAD_REQUEST, except a scope lookup that fails for a reason
 // other than not found: that comes back unmapped, for the handler to map.
-func validatePolicy(ctx context.Context, deps Deps, tenant string, p *policy.Policy) error {
+//
+// stored is the allowedScopes list the row already had (nil on create).
+// Only names not in it are looked up, so a policy that already names a scope
+// that has since gone stays editable.
+func validatePolicy(ctx context.Context, deps Deps, tenant string, p *policy.Policy, stored []string) error {
 	p.Name = strings.TrimSpace(p.Name)
 	if p.Name == "" {
 		return badRequest("name is required")
@@ -159,6 +163,8 @@ func validatePolicy(ctx context.Context, deps Deps, tenant string, p *policy.Pol
 	if utf8.RuneCountInString(p.Description) > maxPolicyDescriptionLength {
 		return badRequest("description is too long")
 	}
+
+	kept := normaliseList(stored, false)
 
 	const sec = int64(time.Second)
 	numbers := []policyNumber{
@@ -191,6 +197,9 @@ func validatePolicy(ctx context.Context, deps Deps, tenant string, p *policy.Pol
 
 	lists := []policyList{
 		{"allowedScopes", &p.AllowedScopes, false, func(name string) error {
+			if _, found := slices.BinarySearch(kept, name); found {
+				return nil
+			}
 			if _, err := deps.Engine.Store().Scopes().GetByName(ctx, tenant, name); err != nil {
 				// The same wrapping the engine uses, so mapScopeError
 				// answers it exactly as it does for keys.create.
@@ -300,7 +309,7 @@ func policiesCreateHandler(deps Deps) func(context.Context, policyFields, dashco
 
 		pol := &policy.Policy{}
 		applyPolicyFields(pol, in)
-		if err := validatePolicy(ctx, deps, tenant, pol); err != nil {
+		if err := validatePolicy(ctx, deps, tenant, pol, nil); err != nil {
 			return policyResponse{}, deps.mapPolicyWriteError(intent, err)
 		}
 		// engineCtx: CreatePolicy stamps the tenant and app from the
@@ -328,8 +337,10 @@ func policiesUpdateHandler(deps Deps) func(context.Context, policiesUpdateReques
 		if err != nil {
 			return policyResponse{}, err
 		}
+		// applyPolicyFields replaces the list, never edits it in place.
+		stored := pol.AllowedScopes
 		applyPolicyFields(pol, in.policyFields)
-		if err := validatePolicy(ctx, deps, tenant, pol); err != nil {
+		if err := validatePolicy(ctx, deps, tenant, pol, stored); err != nil {
 			return policyResponse{}, deps.mapPolicyWriteError(intent, err)
 		}
 		if err := deps.Engine.UpdatePolicy(ctx, pol); err != nil {

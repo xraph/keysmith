@@ -461,6 +461,52 @@ func TestPoliciesUpdateValidatesTheMergedPolicy(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, projectPolicyDetail(storedBefore), projectPolicyDetail(storedAfter))
 		assert.Equal(t, "the usual limits", storedAfter.Description)
+
+		// A bare policy given only a rate limit has no window to go with it.
+		bare := pwCreate(t, deps, pwFields("Bare"))
+		_, err = pwUpdate(deps, bare.ID, policyFields{RateLimit: pwInt(100)})
+		assert.Equal(t, "a rate limit needs a window", badRequestMessage(t, err))
+		assert.Nil(t, policyDetail(t, deps, pwPolicyID(t, bare.ID)).Policy.RateLimit)
+	})
+}
+
+// A policy can name a scope that no longer exists (written before the
+// contract checked, or by another client). An edit looks up only the names
+// it adds, so that policy stays editable, and a new unknown name still
+// refuses. Create looks up every name.
+func TestPoliciesUpdateChecksOnlyTheScopesItAdds(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		mkScope(t, eng, "t1", "read", "")
+		mkScope(t, eng, "t2", "theirs", "")
+		// The engine does not check allowed scopes; the contract does.
+		pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "Legacy", AllowedScopes: []string{"gone", "read"}})
+
+		out, err := pwUpdate(deps, pol.ID.String(), policyFields{Description: pwStr("still editable")})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"gone", "read"}, out.Policy.AllowedScopes)
+
+		out, err = pwUpdate(deps, pol.ID.String(), policyFields{AllowedScopes: pwList("read", " gone", "gone")})
+		require.NoError(t, err, "sending the stored names back is not adding them")
+		assert.Equal(t, []string{"gone", "read"}, out.Policy.AllowedScopes)
+
+		_, err = pwUpdate(deps, pol.ID.String(), policyFields{AllowedScopes: pwList("gone", "nope")})
+		assert.Equal(t, `scope "nope" does not exist in this tenant`, badRequestMessage(t, err))
+		_, err = pwUpdate(deps, pol.ID.String(), policyFields{AllowedScopes: pwList("gone", "theirs")})
+		assert.Equal(t, `scope "theirs" does not exist in this tenant`, badRequestMessage(t, err))
+
+		// Once dropped, the name is no longer stored, so adding it back is
+		// an addition and refuses.
+		out, err = pwUpdate(deps, pol.ID.String(), policyFields{AllowedScopes: pwList("read")})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"read"}, out.Policy.AllowedScopes)
+		_, err = pwUpdate(deps, pol.ID.String(), policyFields{AllowedScopes: pwList("read", "gone")})
+		assert.Equal(t, `scope "gone" does not exist in this tenant`, badRequestMessage(t, err))
+
+		in := pwFields("Fresh")
+		in.AllowedScopes = pwList("gone", "read")
+		_, err = policiesCreateHandler(deps)(context.Background(), in, principal())
+		assert.Equal(t, `scope "gone" does not exist in this tenant`, badRequestMessage(t, err))
 	})
 }
 
@@ -581,6 +627,14 @@ func TestPoliciesWritesAreDispatchedAsWriteCommands(t *testing.T) {
 	cleared := dispatch("policies.update", `{"id":"`+polID+`","rateLimit":0,"rateLimitWindowSeconds":0}`)
 	assert.Nil(t, cleared["rateLimit"])
 	assert.Nil(t, cleared["rateLimitWindowSeconds"])
+
+	// A number sent as a string fails to decode. The message is forge's.
+	_, _, err := d.Dispatch(context.Background(), dashcontract.Request{
+		Envelope: "v1", Kind: dashcontract.KindCommand, Contributor: ContributorName,
+		Intent: "policies.update", IntentVersion: 1,
+		Payload: json.RawMessage(`{"id":"` + polID + `","rateLimit":"100"}`),
+	}, principal())
+	assert.Equal(t, dashcontract.CodeBadRequest, codeOf(t, err))
 }
 
 func TestPolicyWriteIntentsAreWriteCommands(t *testing.T) {
