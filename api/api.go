@@ -157,7 +157,7 @@ func (a *API) registerPolicyRoutes(router forge.Router) {
 
 	_ = g.DELETE("/policies/:policyId", a.deletePolicy,
 		forge.WithSummary("Delete policy"),
-		forge.WithDescription("Deletes a key policy. Fails if keys are assigned to it."),
+		forge.WithDescription("Deletes a key policy. Fails while keys that are not revoked use it."),
 		forge.WithOperationID("keysmithDeletePolicy"),
 		forge.WithRequestSchema(DeletePolicyRequest{}),
 		forge.WithNoContentResponse(),

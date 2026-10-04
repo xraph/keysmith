@@ -13,8 +13,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 
+	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/policy"
 )
 
@@ -334,5 +336,60 @@ func policiesUpdateHandler(deps Deps) func(context.Context, policiesUpdateReques
 			return policyResponse{}, deps.mapPolicyWriteError(intent, err)
 		}
 		return policyResponse{Policy: projectPolicyDetail(pol)}, nil
+	}
+}
+
+type policiesDeleteResponse struct {
+	ID string `json:"id"`
+}
+
+// policyInUse answers a refused delete. blocking is this tenant's count of
+// keys that are not revoked; 0 means the count is unknown or every blocking
+// key belongs to another tenant, so the message names no number.
+func policyInUse(blocking int) error {
+	msg := "keys that are not revoked use this policy"
+	switch {
+	case blocking == 1:
+		msg = "1 key that is not revoked uses this policy"
+	case blocking > 1:
+		msg = strconv.Itoa(blocking) + " keys that are not revoked use this policy"
+	}
+	return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: msg}
+}
+
+func policiesDeleteHandler(deps Deps) func(context.Context, policyIDRequest, dashcontract.Principal) (policiesDeleteResponse, error) {
+	return func(ctx context.Context, in policyIDRequest, p dashcontract.Principal) (policiesDeleteResponse, error) {
+		const intent = "policies.delete"
+		if _, err := requireUser(p); err != nil {
+			return policiesDeleteResponse{}, err
+		}
+		tenant, err := tenantFrom(p, deps)
+		if err != nil {
+			return policiesDeleteResponse{}, err
+		}
+		pol, err := loadPolicyForTenant(ctx, deps, tenant, in.ID, intent)
+		if err != nil {
+			return policiesDeleteResponse{}, err
+		}
+		err = deps.Engine.DeletePolicy(ctx, pol.ID)
+		switch {
+		case errors.Is(err, keysmith.ErrPolicyInUse):
+			// The engine counts keys in every tenant; the message counts
+			// only this one's, so it never names another tenant's keys.
+			_, blocking, cerr := policyKeyCounts(ctx, deps, tenant, pol.ID)
+			if cerr != nil {
+				blocking = 0
+				if deps.Logger != nil {
+					deps.Logger.Error("keysmith/contract: count keys for a refused policy delete",
+						forge.F("intent", intent),
+						forge.F("error", cerr),
+					)
+				}
+			}
+			return policiesDeleteResponse{}, policyInUse(blocking)
+		case err != nil:
+			return policiesDeleteResponse{}, deps.mapError(intent, err)
+		}
+		return policiesDeleteResponse{ID: pol.ID.String()}, nil
 	}
 }

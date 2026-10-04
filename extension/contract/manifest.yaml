@@ -30,6 +30,9 @@ intents:
   - { name: policies.create, kind: command, version: 1, capability: write, invalidates: [policies.list, overview] }
   # An edit changes the policy a key's detail shows.
   - { name: policies.update, kind: command, version: 1, capability: write, invalidates: [policies.list, policies.detail, keys.detail] }
+  # Refuses while a key that is not revoked uses the policy. A revoked key
+  # keeps its policyId, and its detail then reads the policy as none.
+  - { name: policies.delete, kind: command, version: 1, capability: write, invalidates: [policies.list, policies.detail, overview] }
 
 queries:
   keysList:

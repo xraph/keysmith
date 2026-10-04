@@ -123,6 +123,9 @@ func Register(
 		{"policies.update", func() error {
 			return dispatcher.RegisterCommand(d, c, "policies.update", 1, policiesUpdateHandler(deps))
 		}},
+		{"policies.delete", func() error {
+			return dispatcher.RegisterCommand(d, c, "policies.delete", 1, policiesDeleteHandler(deps))
+		}},
 	} {
 		if err := bind.fn(); err != nil {
 			return fmt.Errorf("keysmith/contract: bind %s: %w", bind.intent, err)

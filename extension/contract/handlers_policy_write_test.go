@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,8 +17,10 @@ import (
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/loader"
 
+	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
+	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/policy"
 	"github.com/xraph/keysmith/store"
 	"github.com/xraph/keysmith/store/memory"
@@ -600,4 +603,228 @@ func TestPolicyWriteIntentsAreWriteCommands(t *testing.T) {
 		assert.Equal(t, inv, in.Invalidates, in.Name)
 	}
 	assert.Equal(t, len(want), found)
+}
+
+func pwDelete(deps Deps, polID string) (policiesDeleteResponse, error) {
+	return policiesDeleteHandler(deps)(context.Background(), policyIDRequest{ID: polID}, principal())
+}
+
+func pwKeyWithPolicy(polID id.PolicyID) *keysmith.CreateKeyInput {
+	return &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, PolicyID: &polID}
+}
+
+// pwForeignKey writes a key in tenant t2 that names polID straight to the
+// store. The contract (keys.create) would refuse it, and the engine's
+// CreateKey does not check the policy's tenant.
+func pwForeignKey(t *testing.T, s store.Store, polID id.PolicyID, state key.State) {
+	t.Helper()
+	now := time.Now()
+	require.NoError(t, s.Keys().Create(context.Background(), &key.Key{
+		ID: id.NewKeyID(), TenantID: "t2", AppID: "app", Name: "theirs",
+		Prefix: "sk", Hint: "zzzz", KeyHash: "hash-" + id.NewKeyID().String(),
+		Environment: key.EnvLive, State: state, PolicyID: &polID,
+		CreatedAt: now, UpdatedAt: now,
+	}))
+}
+
+func TestPoliciesDeleteRemovesAnUnusedPolicy(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "Standard"})
+		other := mkPolicy(t, eng, "t1", &policy.Policy{Name: "Other"})
+
+		out, err := pwDelete(deps, " "+pol.ID.String()+" ")
+		require.NoError(t, err)
+		assert.Equal(t, policiesDeleteResponse{ID: pol.ID.String()}, out)
+
+		_, err = policiesDetailHandler(deps)(context.Background(), policyIDRequest{ID: pol.ID.String()}, principal())
+		assert.Equal(t, &dashcontract.Error{Code: dashcontract.CodeNotFound, Message: "policy not found"}, err)
+		_, err = pwDelete(deps, pol.ID.String())
+		assert.Equal(t, &dashcontract.Error{Code: dashcontract.CodeNotFound, Message: "policy not found"}, err,
+			"a second delete finds nothing")
+
+		// Only that policy went.
+		assert.Equal(t, "Other", policyDetail(t, deps, other.ID).Policy.Name)
+	})
+}
+
+// Rex's ruling: revoked keys never block a delete. Active, suspended and
+// expired ones do, and the refusal says how many.
+func TestPoliciesDeleteRefusesWhileAKeyThatIsNotRevokedUsesIt(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "Standard"})
+		live := create(t, eng, "t1", pwKeyWithPolicy(pol.ID))
+		revoked := create(t, eng, "t1", pwKeyWithPolicy(pol.ID))
+		require.NoError(t, eng.RevokeKey(tctx("t1"), revoked.Key.ID, "done"))
+
+		_, err := pwDelete(deps, pol.ID.String())
+		assert.Equal(t, &dashcontract.Error{
+			Code: dashcontract.CodeConflict, Message: "1 key that is not revoked uses this policy",
+		}, err)
+
+		suspended := create(t, eng, "t1", pwKeyWithPolicy(pol.ID))
+		require.NoError(t, eng.SuspendKey(tctx("t1"), suspended.Key.ID))
+		_, err = pwDelete(deps, pol.ID.String())
+		assert.Equal(t, &dashcontract.Error{
+			Code: dashcontract.CodeConflict, Message: "2 keys that are not revoked use this policy",
+		}, err)
+
+		// A refused delete leaves the policy where it was.
+		assert.Equal(t, "Standard", policyDetail(t, deps, pol.ID).Policy.Name)
+
+		require.NoError(t, eng.RevokeKey(tctx("t1"), live.Key.ID, "done"))
+		require.NoError(t, eng.RevokeKey(tctx("t1"), suspended.Key.ID, "done"))
+		out, err := pwDelete(deps, pol.ID.String())
+		require.NoError(t, err)
+		assert.Equal(t, pol.ID.String(), out.ID)
+
+		// The revoked key still names the policy, and its page reads it as
+		// gone.
+		got := stateDetail(t, deps, revoked.Key.ID)
+		assert.Nil(t, got.Policy)
+		assert.Equal(t, pol.ID.String(), got.Key.PolicyID)
+		b, err := json.Marshal(got)
+		require.NoError(t, err)
+		assert.Contains(t, string(b), `"policy":null`)
+	})
+}
+
+// The engine counts keys in every tenant; the message counts only this
+// one's. When only another tenant's key blocks, the refusal names no count
+// rather than saying 0.
+func TestPoliciesDeleteBlockedOnlyByAnotherTenantsKey(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "Standard"})
+		revoked := create(t, eng, "t1", pwKeyWithPolicy(pol.ID))
+		require.NoError(t, eng.RevokeKey(tctx("t1"), revoked.Key.ID, "done"))
+		pwForeignKey(t, s, pol.ID, key.StateActive)
+
+		_, err := pwDelete(deps, pol.ID.String())
+		assert.Equal(t, &dashcontract.Error{
+			Code: dashcontract.CodeConflict, Message: "keys that are not revoked use this policy",
+		}, err)
+		assert.Equal(t, "Standard", policyDetail(t, deps, pol.ID).Policy.Name)
+
+		// With a key of this tenant blocking too, the count is this
+		// tenant's alone.
+		create(t, eng, "t1", pwKeyWithPolicy(pol.ID))
+		_, err = pwDelete(deps, pol.ID.String())
+		assert.Equal(t, &dashcontract.Error{
+			Code: dashcontract.CodeConflict, Message: "1 key that is not revoked uses this policy",
+		}, err)
+	})
+}
+
+// pwFlakyKeys fails ListByPolicy from its failFrom-th call on.
+type pwFlakyKeys struct {
+	key.Store
+	calls    int
+	failFrom int
+}
+
+func (w *pwFlakyKeys) ListByPolicy(ctx context.Context, polID id.PolicyID) ([]*key.Key, error) {
+	w.calls++
+	if w.calls >= w.failFrom {
+		return nil, createPlainErr("dial tcp 10.0.0.1: secret-connection-detail")
+	}
+	return w.Store.ListByPolicy(ctx, polID)
+}
+
+// When the engine refuses and the count read then fails, the answer is
+// still the CONFLICT, without a number, and the failure is logged.
+func TestPoliciesDeleteRefusesWithoutACountWhenTheCountFails(t *testing.T) {
+	s := memory.New()
+	_, eng := setup(t, s)
+	pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "Standard"})
+	create(t, eng, "t1", pwKeyWithPolicy(pol.ID))
+
+	keys := &pwFlakyKeys{Store: s.Keys(), failFrom: 2}
+	flaky, err := keysmith.NewEngine(keysmith.WithStore(stateRaceStore{Store: s, keys: keys}))
+	require.NoError(t, err)
+	var lines []rotateLogLine
+	deps := Deps{Engine: flaky, DefaultTenantID: "t1", Logger: rotateCapturingLogger{lines: &lines}}
+
+	_, err = pwDelete(deps, pol.ID.String())
+	assert.Equal(t, &dashcontract.Error{
+		Code: dashcontract.CodeConflict, Message: "keys that are not revoked use this policy",
+	}, err)
+	assert.Equal(t, 2, keys.calls, "the engine's check, then the count")
+	require.Len(t, lines, 1)
+	assert.Equal(t, "policies.delete", lines[0].fields["intent"])
+	assert.Contains(t, lines[0].fields["error"], "secret-connection-detail")
+
+	// The engine's own read failing is INTERNAL and says nothing more.
+	keys.calls, keys.failFrom = 0, 1
+	_, err = pwDelete(deps, pol.ID.String())
+	assert.Equal(t, &dashcontract.Error{Code: dashcontract.CodeInternal, Message: "an internal error occurred"}, err)
+	_, err = s.Policies().Get(context.Background(), pol.ID)
+	require.NoError(t, err, "no failed delete removed the policy")
+}
+
+func TestPoliciesDeleteIsTenantScoped(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		theirs := mkPolicy(t, eng, "t2", &policy.Policy{Name: "theirs"})
+
+		notFound := &dashcontract.Error{Code: dashcontract.CodeNotFound, Message: "policy not found"}
+		_, foreign := pwDelete(deps, theirs.ID.String())
+		_, missing := pwDelete(deps, id.NewPolicyID().String())
+		assert.Equal(t, notFound, foreign)
+		assert.Equal(t, notFound, missing)
+
+		stored, err := s.Policies().Get(context.Background(), theirs.ID)
+		require.NoError(t, err, "another tenant's policy is still there")
+		assert.Equal(t, "t2", stored.TenantID)
+
+		_, err = pwDelete(deps, "")
+		assert.Equal(t, "id is required", badRequestMessage(t, err))
+		_, err = pwDelete(deps, id.NewKeyID().String())
+		assert.Equal(t, "id is not a policy id", badRequestMessage(t, err))
+	})
+}
+
+func TestPoliciesDeleteRefusesWithoutAUserOrTenant(t *testing.T) {
+	deps, eng := setup(t, memory.New())
+	pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "p"})
+	ctx := context.Background()
+	h := policiesDeleteHandler
+
+	_, err := h(deps)(ctx, policyIDRequest{ID: pol.ID.String()}, dashcontract.Principal{})
+	assert.Equal(t, dashcontract.CodeUnauthenticated, codeOf(t, err))
+	deps.DefaultTenantID = ""
+	_, err = h(deps)(ctx, policyIDRequest{ID: pol.ID.String()}, principal())
+	assert.Equal(t, dashcontract.CodePermissionDenied, codeOf(t, err))
+
+	_, err = eng.GetPolicy(ctx, pol.ID)
+	require.NoError(t, err, "a refused delete removed nothing")
+}
+
+func TestPoliciesDeleteIsDispatchedAsAWriteCommand(t *testing.T) {
+	deps, eng := setup(t, memory.New())
+	pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "p"})
+	d := createTestDispatcher(t, deps)
+
+	data, _, err := d.Dispatch(context.Background(), dashcontract.Request{
+		Envelope: "v1", Kind: dashcontract.KindCommand, Contributor: ContributorName,
+		Intent: "policies.delete", IntentVersion: 1, Payload: json.RawMessage(`{"id":"` + pol.ID.String() + `"}`),
+	}, principal())
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"id":"`+pol.ID.String()+`"}`, string(data))
+
+	m, err := loader.Load(bytes.NewReader(manifestYAML), "keysmith/contract/manifest.yaml")
+	require.NoError(t, err)
+	found := false
+	for _, in := range m.Intents {
+		if in.Name != "policies.delete" {
+			continue
+		}
+		found = true
+		assert.Equal(t, dashcontract.IntentKindCommand, in.Kind)
+		assert.EqualValues(t, "write", in.Capability)
+		assert.Equal(t, 1, in.Version)
+		assert.Equal(t, []string{"policies.list", "policies.detail", "overview"}, in.Invalidates)
+	}
+	assert.True(t, found, "policies.delete is in the manifest")
 }
