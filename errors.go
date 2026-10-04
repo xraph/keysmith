@@ -47,6 +47,11 @@ var (
 	// in its tenant name as their parent.
 	ErrScopeHasChildren = errors.New("keysmith: other scopes name this scope as their parent")
 
+	// ErrScopeAllowedByPolicy is returned when deleting a scope that a policy
+	// in its tenant lists in AllowedScopes. Dropping the name from the policy
+	// instead could empty its list, and an empty list allows every scope.
+	ErrScopeAllowedByPolicy = errors.New("keysmith: a policy allows this scope")
+
 	// ErrPolicyNotFound is returned when a policy cannot be found.
 	ErrPolicyNotFound = store.ErrPolicyNotFound
 

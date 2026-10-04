@@ -2,6 +2,7 @@ package keysmith_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -95,5 +96,54 @@ func TestDeleteScopeRefusesWhileChildrenNameIt(t *testing.T) {
 		require.NoError(t, eng.DeleteScope(ctx, child.ID))
 		require.NoError(t, eng.DeleteScope(ctx, parent.ID))
 		require.ErrorIs(t, eng.DeleteScope(ctx, parent.ID), keysmith.ErrScopeNotFound)
+	})
+}
+
+func TestDeleteScopeRefusesWhileAPolicyAllowsIt(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		read := &scope.Scope{Name: "read"}
+		require.NoError(t, eng.CreateScope(ctx, read))
+		createScope(t, eng, ctx, "write")
+		pol := &policy.Policy{Name: "readonly", AllowedScopes: []string{"write", "read"}}
+		require.NoError(t, eng.CreatePolicy(ctx, pol))
+		// Another tenant's policy naming the same scope does not count.
+		other := keysmith.WithTenant(context.Background(), "app1", "t2")
+		require.NoError(t, eng.CreatePolicy(other, &policy.Policy{Name: "theirs", AllowedScopes: []string{"read"}}))
+
+		require.ErrorIs(t, eng.DeleteScope(ctx, read.ID), keysmith.ErrScopeAllowedByPolicy)
+		_, err := s.Scopes().Get(context.Background(), read.ID)
+		require.NoError(t, err, "a refused delete leaves the scope")
+
+		pol.AllowedScopes = []string{"write"}
+		require.NoError(t, eng.UpdatePolicy(ctx, pol))
+		require.NoError(t, eng.DeleteScope(ctx, read.ID))
+	})
+}
+
+// The check pages the tenant's policies, so a policy past the first page
+// still blocks.
+func TestDeleteScopeFindsAnAllowingPolicyPastTheFirstPage(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		read := &scope.Scope{Name: "read"}
+		require.NoError(t, eng.CreateScope(ctx, read))
+		for i := range 150 {
+			require.NoError(t, eng.CreatePolicy(ctx, &policy.Policy{Name: "p" + strconv.Itoa(i)}))
+		}
+		require.NoError(t, eng.CreatePolicy(ctx, &policy.Policy{Name: "last", AllowedScopes: []string{"read"}}))
+		require.ErrorIs(t, eng.DeleteScope(ctx, read.ID), keysmith.ErrScopeAllowedByPolicy)
+	})
+}
+
+// Children are checked first, so a scope with both answers ErrScopeHasChildren.
+func TestDeleteScopeChecksChildrenBeforePolicies(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		parent := &scope.Scope{Name: "billing"}
+		require.NoError(t, eng.CreateScope(ctx, parent))
+		require.NoError(t, eng.CreateScope(ctx, &scope.Scope{Name: "billing:read", Parent: "billing"}))
+		require.NoError(t, eng.CreatePolicy(ctx, &policy.Policy{Name: "p", AllowedScopes: []string{"billing"}}))
+		require.ErrorIs(t, eng.DeleteScope(ctx, parent.ID), keysmith.ErrScopeHasChildren)
 	})
 }

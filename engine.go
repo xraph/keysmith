@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	log "github.com/xraph/go-utils/log"
@@ -544,10 +545,15 @@ func (e *Engine) ListScopes(ctx context.Context, filter *scope.ListFilter) ([]*s
 	return e.store.Scopes().List(ctx, filter)
 }
 
+// scopePolicyPage is how many policies DeleteScope reads per call while it
+// looks for one that allows the scope.
+const scopePolicyPage = 100
+
 // DeleteScope deletes a scope by ID and takes it off every key that holds
 // it. It refuses with ErrScopeHasChildren while another scope in the same
-// tenant names it as its parent, and answers ErrScopeNotFound for a missing
-// scope.
+// tenant names it as its parent, then with ErrScopeAllowedByPolicy while a
+// policy in the tenant lists it in AllowedScopes. It answers
+// ErrScopeNotFound for a missing scope.
 func (e *Engine) DeleteScope(ctx context.Context, scopeID id.ScopeID) error {
 	s, err := e.store.Scopes().Get(ctx, scopeID)
 	if err != nil {
@@ -559,6 +565,20 @@ func (e *Engine) DeleteScope(ctx context.Context, scopeID id.ScopeID) error {
 	}
 	if len(children) > 0 {
 		return ErrScopeHasChildren
+	}
+	for offset := 0; ; offset += scopePolicyPage {
+		pols, err := e.store.Policies().List(ctx, &policy.ListFilter{TenantID: s.TenantID, Limit: scopePolicyPage, Offset: offset})
+		if err != nil {
+			return fmt.Errorf("list policies: %w", err)
+		}
+		for _, p := range pols {
+			if slices.Contains(p.AllowedScopes, s.Name) {
+				return ErrScopeAllowedByPolicy
+			}
+		}
+		if len(pols) < scopePolicyPage {
+			break
+		}
 	}
 	return e.store.Scopes().Delete(ctx, scopeID)
 }
