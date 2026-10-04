@@ -13,7 +13,7 @@ import (
 // mapError translates a keysmith error into a *dashcontract.Error the
 // dashboard client can branch on.
 //
-// The BAD_REQUEST and CONFLICT messages are the error's own text: those
+// Most BAD_REQUEST and CONFLICT messages are the error's own text: those
 // errors carry only names the caller supplied. An error that is not one of
 // the sentinels below becomes INTERNAL with a generic message, because its
 // text can carry a connection string or a stored value. Handlers call it
@@ -34,6 +34,9 @@ func mapError(err error) error {
 		errors.Is(err, keysmith.ErrKeyLifetimeExceeded),
 		errors.Is(err, usage.ErrInvalidPeriod):
 		return &dashcontract.Error{Code: dashcontract.CodeBadRequest, Message: err.Error()}
+	case errors.Is(err, keysmith.ErrPolicyNameTaken):
+		// The engine's text names the tenant, which the dashboard never shows.
+		return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: "a policy with this name already exists"}
 	case errors.Is(err, keysmith.ErrInvalidStateTransition),
 		errors.Is(err, keysmith.ErrPolicyInUse):
 		return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: err.Error()}

@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,18 +169,28 @@ func TestKeyDetailCarriesScopesPolicyAndPendingExpiry(t *testing.T) {
 func TestNoQueryResponseCarriesASecret(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, eng := setup(t, s)
-		r := create(t, eng, "t1", nil)
+		pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "p"})
+		polID := pol.ID
+		r := create(t, eng, "t1", &keysmith.CreateKeyInput{
+			Name: "k", Prefix: "sk", Environment: key.EnvLive, PolicyID: &polID,
+		})
 		list, err := keysListHandler(deps)(context.Background(), keysListRequest{}, principal())
 		require.NoError(t, err)
 		detail, err := keysDetailHandler(deps)(context.Background(), keysDetailRequest{ID: r.Key.ID.String()}, principal())
 		require.NoError(t, err)
-		for _, v := range []any{list, detail} {
+		policies, err := policiesListHandler(deps)(context.Background(), pickerRequest{}, principal())
+		require.NoError(t, err)
+		polDetail, err := policiesDetailHandler(deps)(context.Background(), policyIDRequest{ID: pol.ID.String()}, principal())
+		require.NoError(t, err)
+		for _, v := range []any{list, detail, policies, polDetail} {
 			b, err := json.Marshal(v)
 			require.NoError(t, err)
 			body := string(b)
-			for _, banned := range []string{"rawKey", "raw_key", "keyHash", "key_hash", r.RawKey, r.Key.KeyHash} {
+			for _, banned := range []string{"rawKey", "raw_key", "keyHash", "key_hash", r.Key.KeyHash} {
 				assert.NotContains(t, body, banned)
 			}
+			// Never print the raw key, even in a failure message.
+			assert.False(t, strings.Contains(body, r.RawKey), "response of %d bytes carries the raw key", len(body))
 		}
 	})
 }

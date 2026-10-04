@@ -27,6 +27,9 @@ intents:
   - { name: keys.reactivate, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview] }
   - { name: keys.scopes.assign, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail] }
   - { name: keys.scopes.remove, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail] }
+  - { name: policies.create, kind: command, version: 1, capability: write, invalidates: [policies.list, overview] }
+  # An edit changes the policy a key's detail shows.
+  - { name: policies.update, kind: command, version: 1, capability: write, invalidates: [policies.list, policies.detail, keys.detail] }
 
 queries:
   keysList:

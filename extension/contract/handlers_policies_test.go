@@ -153,7 +153,8 @@ func TestPoliciesDetailCountsKeys(t *testing.T) {
 		create(t, eng, "t1", nil)
 
 		// Another tenant's key naming this policy, written straight to the
-		// store because the engine would not let it through.
+		// store because the contract (keys.create) would not let it through.
+		// The engine's CreateKey does not check the policy's tenant.
 		now := time.Now()
 		polID := pol.ID
 		require.NoError(t, s.Keys().Create(context.Background(), &key.Key{
