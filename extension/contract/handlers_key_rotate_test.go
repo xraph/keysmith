@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 
 	"github.com/xraph/keysmith"
@@ -605,5 +607,88 @@ func TestListOpenWindowsDropsARecordSeenOnTwoPages(t *testing.T) {
 		}
 		assert.Len(t, got, total)
 		assert.Equal(t, ids, seen)
+	})
+}
+
+// A key whose expiry has passed is expired even while its stored state still
+// says active. The engine refuses it, and the contract answers that as a
+// conflict before any rotation record is written.
+func TestKeysRotateStoredActiveKeyPastItsExpiryIsAConflict(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		created := create(t, eng, "t1", nil)
+		k, err := eng.GetKey(tctx("t1"), created.Key.ID)
+		require.NoError(t, err)
+		past := time.Now().Add(-time.Hour)
+		k.ExpiresAt = &past
+		require.NoError(t, s.Keys().Update(context.Background(), k))
+		stored, err := s.Keys().Get(context.Background(), created.Key.ID)
+		require.NoError(t, err)
+		require.Equal(t, "active", string(stored.State), "the stored state must still say active")
+
+		_, err = keysRotateHandler(deps)(context.Background(), rotateReq(created.Key.ID, "manual", nil), principal())
+		require.Error(t, err)
+		assert.Equal(t, dashcontract.CodeConflict, codeOf(t, err))
+		var ce *dashcontract.Error
+		require.ErrorAs(t, err, &ce)
+		assert.Equal(t, "a revoked or expired key cannot be rotated", ce.Message)
+		assert.Empty(t, rotateRecords(t, s, created.Key.ID))
+	})
+}
+
+// rotateLogLine is one Error call the capturing logger saw.
+type rotateLogLine struct {
+	msg    string
+	fields map[string]string
+}
+
+// rotateCapturingLogger keeps every Error call and drops everything else.
+type rotateCapturingLogger struct {
+	forge.Logger
+	lines *[]rotateLogLine
+}
+
+func (l rotateCapturingLogger) Error(msg string, fields ...forge.Field) {
+	line := rotateLogLine{msg: msg, fields: map[string]string{}}
+	for _, f := range fields {
+		line.fields[f.Key()] = fmt.Sprint(f.Value())
+	}
+	*l.lines = append(*l.lines, line)
+}
+
+// When the window read after a rotation fails, the handler logs what went
+// wrong and still answers the raw key. The log must say which intent and key
+// failed and why, and must never carry the raw key.
+func TestKeysRotateFallbackLogsTheFailureButNeverTheRawKey(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		_, eng := setup(t, s)
+		created := create(t, eng, "t1", nil)
+		flaky := &rotateFlakyRotations{Store: s.Rotations(), failFrom: 2}
+		broken, err := keysmith.NewEngine(keysmith.WithStore(rotateStore{Store: s, rots: flaky}))
+		require.NoError(t, err)
+		var lines []rotateLogLine
+		deps := Deps{
+			Engine:          broken,
+			DefaultTenantID: "t1",
+			Logger:          rotateCapturingLogger{Logger: forge.NewNoopLogger(), lines: &lines},
+		}
+
+		out, err := keysRotateHandler(deps)(context.Background(), rotateReq(created.Key.ID, "manual", rotateInt64(3600)), principal())
+		require.NoError(t, err)
+		require.NotEmpty(t, out.RawKey)
+		_, err = eng.ValidateKey(tctx("t1"), out.RawKey)
+		require.NoError(t, err, "raw key of length %d did not validate", len(out.RawKey))
+
+		require.Len(t, lines, 1)
+		line := lines[0]
+		assert.Equal(t, "keys.rotate", line.fields["intent"])
+		assert.Equal(t, created.Key.ID.String(), line.fields["key_id"])
+		assert.Contains(t, line.fields["error"], "connection reset")
+		all := line.msg
+		for k, v := range line.fields {
+			all += " " + k + "=" + v
+		}
+		// assert.NotContains would print the key on failure, so say it plainly.
+		assert.False(t, strings.Contains(all, out.RawKey), "the log carries the raw key (length %d)", len(out.RawKey))
 	})
 }
