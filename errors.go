@@ -43,6 +43,10 @@ var (
 	// another scope in the same tenant already has.
 	ErrScopeNameTaken = errors.New("keysmith: a scope with this name already exists in the tenant")
 
+	// ErrScopeHasChildren is returned when deleting a scope that other scopes
+	// in its tenant name as their parent.
+	ErrScopeHasChildren = errors.New("keysmith: other scopes name this scope as their parent")
+
 	// ErrPolicyNotFound is returned when a policy cannot be found.
 	ErrPolicyNotFound = store.ErrPolicyNotFound
 

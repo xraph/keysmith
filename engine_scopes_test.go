@@ -80,3 +80,20 @@ func TestCreateScopeRefusesADuplicateNameInTheTenant(t *testing.T) {
 		require.NoError(t, eng.CreateScope(keysmith.WithTenant(context.Background(), "app1", "t2"), &scope.Scope{Name: "read"}))
 	})
 }
+
+func TestDeleteScopeRefusesWhileChildrenNameIt(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		parent := &scope.Scope{Name: "billing"}
+		require.NoError(t, eng.CreateScope(ctx, parent))
+		child := &scope.Scope{Name: "billing:read", Parent: "billing"}
+		require.NoError(t, eng.CreateScope(ctx, child))
+		// Another tenant's child of the same name does not count.
+		require.NoError(t, eng.CreateScope(keysmith.WithTenant(context.Background(), "app1", "t2"), &scope.Scope{Name: "x", Parent: "billing"}))
+
+		require.ErrorIs(t, eng.DeleteScope(ctx, parent.ID), keysmith.ErrScopeHasChildren)
+		require.NoError(t, eng.DeleteScope(ctx, child.ID))
+		require.NoError(t, eng.DeleteScope(ctx, parent.ID))
+		require.ErrorIs(t, eng.DeleteScope(ctx, parent.ID), keysmith.ErrScopeNotFound)
+	})
+}

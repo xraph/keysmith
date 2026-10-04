@@ -60,3 +60,24 @@ func TestDeletePolicyIgnoresRevokedKeys(t *testing.T) {
 		require.NotNil(t, k.PolicyID, "a revoked key keeps the id of the policy it used")
 	})
 }
+
+func TestDeletePolicyIgnoresARevokedKeyWhoseStateWasReset(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		pol := &policy.Policy{Name: "Retired"}
+		require.NoError(t, eng.CreatePolicy(ctx, pol))
+		res, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvTest, PolicyID: &pol.ID})
+		require.NoError(t, err)
+		require.NoError(t, eng.RevokeKey(ctx, res.Key.ID, "done"))
+
+		// A stale full-row write can put State back to active, but RevokedAt
+		// stays set and the key stays revoked.
+		require.NoError(t, s.Keys().UpdateState(context.Background(), res.Key.ID, key.StateActive))
+		k, err := s.Keys().Get(context.Background(), res.Key.ID)
+		require.NoError(t, err)
+		require.Equal(t, key.StateActive, k.State)
+		require.NotNil(t, k.RevokedAt)
+
+		require.NoError(t, eng.DeletePolicy(ctx, pol.ID))
+	})
+}

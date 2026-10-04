@@ -495,14 +495,15 @@ func (e *Engine) checkPolicyName(ctx context.Context, tenantID, name string, sel
 // DeletePolicy deletes a policy by ID. It refuses with ErrPolicyInUse while
 // any key that is not revoked uses the policy. A revoked key never validates
 // again and cannot be deleted, so it does not hold the policy; it keeps the
-// policy's ID after the delete.
+// policy's ID after the delete. A key with RevokedAt set counts as revoked
+// whatever its State says, as it does everywhere else in the engine.
 func (e *Engine) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
 	keys, err := e.store.Keys().ListByPolicy(ctx, polID)
 	if err != nil {
 		return fmt.Errorf("list keys by policy: %w", err)
 	}
 	for _, k := range keys {
-		if k.State != key.StateRevoked {
+		if k.State != key.StateRevoked && k.RevokedAt == nil {
 			return ErrPolicyInUse
 		}
 	}
@@ -543,8 +544,22 @@ func (e *Engine) ListScopes(ctx context.Context, filter *scope.ListFilter) ([]*s
 	return e.store.Scopes().List(ctx, filter)
 }
 
-// DeleteScope deletes a scope by ID.
+// DeleteScope deletes a scope by ID and takes it off every key that holds
+// it. It refuses with ErrScopeHasChildren while another scope in the same
+// tenant names it as its parent, and answers ErrScopeNotFound for a missing
+// scope.
 func (e *Engine) DeleteScope(ctx context.Context, scopeID id.ScopeID) error {
+	s, err := e.store.Scopes().Get(ctx, scopeID)
+	if err != nil {
+		return err
+	}
+	children, err := e.store.Scopes().List(ctx, &scope.ListFilter{TenantID: s.TenantID, Parent: s.Name, Limit: 1})
+	if err != nil {
+		return fmt.Errorf("list child scopes: %w", err)
+	}
+	if len(children) > 0 {
+		return ErrScopeHasChildren
+	}
 	return e.store.Scopes().Delete(ctx, scopeID)
 }
 
