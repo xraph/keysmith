@@ -57,7 +57,8 @@ func projectScopeSummary(s *scope.Scope) ScopeSummary {
 }
 
 // validateScope trims the request's fields in place and checks them. The
-// first failure wins, in this order: name, description, parent. Every
+// first failure wins, in this order: name, description, the parent's
+// length, the parent being the scope itself, the parent existing. Every
 // failure is BAD_REQUEST, except a parent lookup that fails for a reason
 // other than not found: that comes back unmapped, for the handler to map.
 func validateScope(ctx context.Context, deps Deps, tenant string, in *scopesCreateRequest) error {
@@ -78,6 +79,11 @@ func validateScope(ctx context.Context, deps Deps, tenant string, in *scopesCrea
 	in.Parent = strings.TrimSpace(in.Parent)
 	if in.Parent == "" {
 		return nil
+	}
+	// A parent is a scope name, so the name's cap applies, and it is
+	// checked before the lookup sends it to the store.
+	if utf8.RuneCountInString(in.Parent) > maxScopeNameLength {
+		return badRequest("parent is too long")
 	}
 	if in.Parent == in.Name {
 		return badRequest("a scope cannot be its own parent")

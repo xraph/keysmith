@@ -76,6 +76,7 @@ func TestScopesCreateValidationMessages(t *testing.T) {
 		{"name with a tab", scopesCreateRequest{Name: "billing\tread"}, "name cannot contain spaces"},
 		{"name with a no-break space", scopesCreateRequest{Name: "billing read"}, "name cannot contain spaces"},
 		{"description over 1000 runes", scopesCreateRequest{Name: "read", Description: longDesc}, "description is too long"},
+		{"parent over 100 runes", scopesCreateRequest{Name: "read", Parent: strings.Repeat("é", 101)}, "parent is too long"},
 		{"own parent", scopesCreateRequest{Name: "read", Parent: " read "}, "a scope cannot be its own parent"},
 		{"missing parent", scopesCreateRequest{Name: "read", Parent: "nope"}, `parent scope "nope" does not exist in this tenant`},
 		{"another tenant's parent", scopesCreateRequest{Name: "read", Parent: " theirs "}, `parent scope "theirs" does not exist in this tenant`},
@@ -86,6 +87,8 @@ func TestScopesCreateValidationMessages(t *testing.T) {
 		{"spaces beat a long description", scopesCreateRequest{Name: "a b", Description: longDesc}, "name cannot contain spaces"},
 		{"a long description beats a bad parent", scopesCreateRequest{Name: "read", Parent: "nope", Description: longDesc}, "description is too long"},
 		{"own parent beats a missing parent", scopesCreateRequest{Name: "nope", Parent: "nope"}, "a scope cannot be its own parent"},
+		{"a long description beats a long parent", scopesCreateRequest{Name: "read", Parent: strings.Repeat("p", 101), Description: longDesc}, "description is too long"},
+		{"a long parent beats a missing parent", scopesCreateRequest{Name: "read", Parent: strings.Repeat("p", 101)}, "parent is too long"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
