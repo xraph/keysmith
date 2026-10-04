@@ -126,6 +126,12 @@ func Register(
 		{"policies.delete", func() error {
 			return dispatcher.RegisterCommand(d, c, "policies.delete", 1, policiesDeleteHandler(deps))
 		}},
+		{"scopes.create", func() error {
+			return dispatcher.RegisterCommand(d, c, "scopes.create", 1, scopesCreateHandler(deps))
+		}},
+		{"scopes.delete", func() error {
+			return dispatcher.RegisterCommand(d, c, "scopes.delete", 1, scopesDeleteHandler(deps))
+		}},
 	} {
 		if err := bind.fn(); err != nil {
 			return fmt.Errorf("keysmith/contract: bind %s: %w", bind.intent, err)

@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/policy"
 	"github.com/xraph/keysmith/rotation"
+	"github.com/xraph/keysmith/scope"
 )
 
 // openWindowPage is how many rotation records listOpenWindows asks for per
@@ -96,6 +97,49 @@ func loadPolicyForTenant(ctx context.Context, deps Deps, tenant, rawID, intent s
 		return nil, policyNotFound()
 	}
 	return pol, nil
+}
+
+// requireScopeID trims raw and parses it as a scope ID. Empty answers
+// BAD_REQUEST "id is required"; unparseable answers BAD_REQUEST "id is not a
+// scope id".
+func requireScopeID(raw string) (id.ScopeID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return id.ScopeID{}, badRequest("id is required")
+	}
+	sid, err := id.ParseScopeID(raw)
+	if err != nil {
+		return id.ScopeID{}, badRequest("id is not a scope id")
+	}
+	return sid, nil
+}
+
+// scopeNotFound is the one error every by-ID scope handler returns for a
+// scope that does not exist and for one that belongs to another tenant.
+func scopeNotFound() error {
+	return &dashcontract.Error{Code: dashcontract.CodeNotFound, Message: "scope not found"}
+}
+
+// loadScopeForTenant loads the scope and answers scopeNotFound() when it
+// does not exist OR belongs to another tenant, so the two cannot be told
+// apart. intent is the caller's, for the internal error log. The engine has
+// no GetScope, so this reads the store, as validatePolicy does.
+func loadScopeForTenant(ctx context.Context, deps Deps, tenant, rawID, intent string) (*scope.Scope, error) {
+	sid, err := requireScopeID(rawID)
+	if err != nil {
+		return nil, err
+	}
+	sc, err := deps.Engine.Store().Scopes().Get(ctx, sid)
+	if err != nil {
+		if errors.Is(err, keysmith.ErrScopeNotFound) {
+			return nil, scopeNotFound()
+		}
+		return nil, deps.mapError(intent, err)
+	}
+	if sc.TenantID != tenant {
+		return nil, scopeNotFound()
+	}
+	return sc, nil
 }
 
 // listOpenWindows pages through ListRotations for the key until a short

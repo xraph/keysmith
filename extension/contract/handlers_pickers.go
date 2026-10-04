@@ -105,12 +105,7 @@ func scopesListHandler(deps Deps) func(context.Context, pickerRequest, dashcontr
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 		out := make([]ScopeSummary, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, ScopeSummary{
-				ID:          r.ID.String(),
-				Name:        r.Name,
-				Parent:      r.Parent,
-				Description: r.Description,
-			})
+			out = append(out, projectScopeSummary(r))
 		}
 		return scopesListResponse{Scopes: out, HasMore: hasMore}, nil
 	}

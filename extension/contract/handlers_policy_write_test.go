@@ -878,7 +878,7 @@ func TestPoliciesDeleteIsDispatchedAsAWriteCommand(t *testing.T) {
 		assert.Equal(t, dashcontract.IntentKindCommand, in.Kind)
 		assert.EqualValues(t, "write", in.Capability)
 		assert.Equal(t, 1, in.Version)
-		assert.Equal(t, []string{"policies.list", "policies.detail", "overview"}, in.Invalidates)
+		assert.Equal(t, []string{"policies.list", "policies.detail", "overview", "keys.detail"}, in.Invalidates)
 	}
 	assert.True(t, found, "policies.delete is in the manifest")
 }

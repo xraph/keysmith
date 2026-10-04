@@ -31,8 +31,14 @@ intents:
   # An edit changes the policy a key's detail shows.
   - { name: policies.update, kind: command, version: 1, capability: write, invalidates: [policies.list, policies.detail, keys.detail] }
   # Refuses while a key that is not revoked uses the policy. A revoked key
-  # keeps its policyId, and its detail then reads the policy as none.
-  - { name: policies.delete, kind: command, version: 1, capability: write, invalidates: [policies.list, policies.detail, overview] }
+  # keeps its policyId, and its detail then reads the policy as none, so
+  # keys.detail refreshes too.
+  - { name: policies.delete, kind: command, version: 1, capability: write, invalidates: [policies.list, policies.detail, overview, keys.detail] }
+  - { name: scopes.create, kind: command, version: 1, capability: write, invalidates: [scopes.list, overview] }
+  # Takes the scope off every key that holds it, and both key views show
+  # scopes. Refuses while other scopes name it as their parent, or while a
+  # policy lists it in allowedScopes.
+  - { name: scopes.delete, kind: command, version: 1, capability: write, invalidates: [scopes.list, keys.list, keys.detail, overview] }
 
 queries:
   keysList:

@@ -37,6 +37,9 @@ func mapError(err error) error {
 	case errors.Is(err, keysmith.ErrPolicyNameTaken):
 		// The engine's text names the tenant, which the dashboard never shows.
 		return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: "a policy with this name already exists"}
+	case errors.Is(err, keysmith.ErrScopeNameTaken):
+		// The engine's text names the tenant here too.
+		return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: "a scope with this name already exists"}
 	case errors.Is(err, keysmith.ErrInvalidStateTransition),
 		errors.Is(err, keysmith.ErrPolicyInUse):
 		return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: err.Error()}
