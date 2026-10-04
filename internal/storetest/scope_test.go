@@ -2,6 +2,7 @@ package storetest_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -54,5 +55,49 @@ func TestDeletingAScopeLeavesAnotherTenantsSameNameScope(t *testing.T) {
 		require.Len(t, held, 1, "the t2 key still holds its own scope")
 		require.Equal(t, theirs.ID, held[0].ID)
 		require.Equal(t, "t2", held[0].TenantID)
+	})
+}
+
+// Paging scopes by offset returns every row exactly once. Two tenants share
+// every name, so a list across both has ties on name the order must break.
+func TestPagingScopesReturnsEveryRowOnce(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		all, t1 := map[string]bool{}, map[string]bool{}
+		for i := range 125 {
+			for _, tenant := range []string{"t1", "t2"} {
+				sc := &scope.Scope{ID: id.NewScopeID(), TenantID: tenant, AppID: "app1", Name: "s" + strconv.Itoa(i), CreatedAt: now}
+				require.NoError(t, s.Scopes().Create(ctx, sc))
+				all[sc.ID.String()] = true
+				if tenant == "t1" {
+					t1[sc.ID.String()] = true
+				}
+			}
+		}
+
+		pageAll := func(tenant string) map[string]int {
+			seen := map[string]int{}
+			for offset := 0; ; offset += 33 {
+				page, err := s.Scopes().List(ctx, &scope.ListFilter{TenantID: tenant, Limit: 33, Offset: offset})
+				require.NoError(t, err)
+				for _, sc := range page {
+					seen[sc.ID.String()]++
+				}
+				if len(page) < 33 {
+					return seen
+				}
+			}
+		}
+		for range 5 {
+			for tenant, want := range map[string]map[string]bool{"": all, "t1": t1} {
+				seen := pageAll(tenant)
+				require.Len(t, seen, len(want), "tenant %q", tenant)
+				for sid, n := range seen {
+					require.True(t, want[sid], "tenant %q", tenant)
+					require.Equal(t, 1, n, "scope %s came back %d times", sid, n)
+				}
+			}
+		}
 	})
 }

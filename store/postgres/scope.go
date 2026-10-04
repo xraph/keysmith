@@ -82,7 +82,7 @@ func (s *scopeStore) Delete(ctx context.Context, scopeID id.ScopeID) error {
 
 func (s *scopeStore) List(ctx context.Context, filter *scope.ListFilter) ([]*scope.Scope, error) {
 	var models []scopeModel
-	q := s.db.NewSelect(&models).OrderExpr("name ASC")
+	q := s.db.NewSelect(&models).OrderExpr("name ASC, id ASC")
 
 	if filter != nil {
 		if filter.TenantID != "" {

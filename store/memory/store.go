@@ -363,6 +363,15 @@ func (s *policyStore) List(_ context.Context, filter *policy.ListFilter) ([]*pol
 		cp := *p
 		result = append(result, &cp)
 	}
+	// Newest first with the ID breaking ties, as the SQL and mongo stores
+	// order them. A map ranges in a random order, so without a total order
+	// paging by offset could skip a row or repeat one.
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.After(result[j].CreatedAt)
+		}
+		return result[i].ID.String() > result[j].ID.String()
+	})
 	offset, limit := 0, 0
 	if filter != nil {
 		offset, limit = filter.Offset, filter.Limit
@@ -786,6 +795,14 @@ func (s *scopeStore) List(_ context.Context, filter *scope.ListFilter) ([]*scope
 		cp := *sc
 		result = append(result, &cp)
 	}
+	// By name with the ID breaking ties, as the SQL and mongo stores order
+	// them, so paging by offset sees every row once.
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name != result[j].Name {
+			return result[i].Name < result[j].Name
+		}
+		return result[i].ID.String() < result[j].ID.String()
+	})
 	offset, limit := 0, 0
 	if filter != nil {
 		offset, limit = filter.Offset, filter.Limit

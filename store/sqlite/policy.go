@@ -85,7 +85,7 @@ func (s *policyStore) Delete(ctx context.Context, polID id.PolicyID) error {
 
 func (s *policyStore) List(ctx context.Context, filter *policy.ListFilter) ([]*policy.Policy, error) {
 	var models []policyModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC, id DESC")
 
 	if filter != nil {
 		if filter.TenantID != "" {

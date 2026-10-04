@@ -2,6 +2,7 @@ package storetest_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -72,5 +73,45 @@ func TestPolicyEveryFieldRoundTrips(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, list, 1)
 		assertPolicyEqual(t, p, list[0])
+	})
+}
+
+// Paging a tenant's policies by offset returns every row exactly once, even
+// when they all share one created_at, so the order has to be total.
+func TestPagingPoliciesReturnsEveryRowOnce(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		want := map[string]bool{}
+		for i := range 250 {
+			p := &policy.Policy{
+				ID: id.NewPolicyID(), TenantID: "t1", AppID: "app",
+				Name: "p" + strconv.Itoa(i), CreatedAt: now, UpdatedAt: now,
+			}
+			require.NoError(t, s.Policies().Create(ctx, p))
+			want[p.ID.String()] = true
+		}
+		require.NoError(t, s.Policies().Create(ctx, &policy.Policy{
+			ID: id.NewPolicyID(), TenantID: "t2", AppID: "app", Name: "theirs", CreatedAt: now, UpdatedAt: now,
+		}))
+
+		for range 5 {
+			seen := map[string]int{}
+			for offset := 0; ; offset += 33 {
+				page, err := s.Policies().List(ctx, &policy.ListFilter{TenantID: "t1", Limit: 33, Offset: offset})
+				require.NoError(t, err)
+				for _, p := range page {
+					seen[p.ID.String()]++
+				}
+				if len(page) < 33 {
+					break
+				}
+			}
+			require.Len(t, seen, len(want))
+			for pid, n := range seen {
+				require.True(t, want[pid], "only t1's policies")
+				require.Equal(t, 1, n, "policy %s came back %d times", pid, n)
+			}
+		}
 	})
 }

@@ -104,7 +104,7 @@ func (s *scopeStore) List(ctx context.Context, filter *scope.ListFilter) ([]*sco
 
 	q := s.mdb.NewFind(&models).
 		Filter(f).
-		Sort(bson.D{{Key: "name", Value: 1}})
+		Sort(bson.D{{Key: "name", Value: 1}, {Key: "_id", Value: 1}})
 
 	if filter != nil {
 		if filter.Limit > 0 {
