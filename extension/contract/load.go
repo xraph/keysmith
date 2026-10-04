@@ -56,6 +56,10 @@ func loadKeyForTenant(ctx context.Context, deps Deps, tenant, rawID string) (*ke
 // page, keeping records with a non-empty OldHint and GraceEnds after now,
 // sorted by GraceEnds ascending. There is no cap: the slice 2 detail read
 // stopped at 100 and could hide a still-valid previous key.
+//
+// It also stops at a full page that adds no rotation it has not already
+// seen. A backend that ignores Offset hands back the same first page every
+// time, and without that check this would page it forever.
 func listOpenWindows(ctx context.Context, eng *keysmith.Engine, keyID id.KeyID, now time.Time) ([]PreviousKey, error) {
 	var open []*rotation.Record
 	// A rotation inserted while this pages shifts the offsets, so a record
@@ -66,18 +70,20 @@ func listOpenWindows(ctx context.Context, eng *keysmith.Engine, keyID id.KeyID, 
 		if err != nil {
 			return nil, err
 		}
+		added := false
 		for _, r := range recs {
 			if seen[r.ID.String()] {
 				continue
 			}
 			seen[r.ID.String()] = true
+			added = true
 			// Records written before the grace fix have no old hint and must
 			// never read as an open window.
 			if r.OldHint != "" && r.GraceEnds.After(now) {
 				open = append(open, r)
 			}
 		}
-		if len(recs) < openWindowPage {
+		if len(recs) < openWindowPage || !added {
 			break
 		}
 	}

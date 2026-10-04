@@ -2,6 +2,7 @@ package contract
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 
+	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
 	"github.com/xraph/keysmith/rotation"
@@ -134,5 +136,92 @@ func TestListOpenWindowsSortsByGraceEndsAndSkipsHintless(t *testing.T) {
 		require.Len(t, got, 2)
 		assert.Equal(t, soon.String(), got[0].RotationID)
 		assert.Equal(t, late.String(), got[1].RotationID)
+	})
+}
+
+// seedWindows writes n rotation records for the key, every one of them an
+// open window, and returns their IDs.
+func seedWindows(t *testing.T, s store.Store, keyID id.KeyID, n int, now time.Time) []string {
+	t.Helper()
+	ids := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		rec := &rotation.Record{
+			ID: id.NewRotationID(), KeyID: keyID, TenantID: "t1",
+			OldKeyHash: "old", NewKeyHash: "new", OldHint: "abcd",
+			Reason: rotation.ReasonManual, GraceTTL: time.Hour,
+			GraceEnds: now.Add(time.Duration(i+1) * time.Minute),
+			CreatedAt: now.Add(-time.Duration(i+1) * time.Minute),
+		}
+		require.NoError(t, s.Rotations().Create(context.Background(), rec))
+		ids = append(ids, rec.ID.String())
+	}
+	return ids
+}
+
+func windowIDs(ws []PreviousKey) []string {
+	out := make([]string, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, w.RotationID)
+	}
+	return out
+}
+
+func TestListOpenWindowsExactlyOneFullPage(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		_, eng := setup(t, s)
+		k := create(t, eng, "t1", nil)
+		now := time.Now()
+		want := seedWindows(t, s, k.Key.ID, openWindowPage, now)
+
+		got, err := listOpenWindows(context.Background(), eng, k.Key.ID, now)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, want, windowIDs(got))
+	})
+}
+
+// offsetBlindStore hands out a rotation store whose List ignores Offset, the
+// way a backend that does not support it would, and gives up after a few
+// calls so a loop that never ends fails the test.
+type offsetBlindStore struct {
+	store.Store
+	calls *int
+}
+
+func (s offsetBlindStore) Rotations() rotation.Store {
+	return offsetBlindRotations{Store: s.Store.Rotations(), calls: s.calls}
+}
+
+type offsetBlindRotations struct {
+	rotation.Store
+	calls *int
+}
+
+func (r offsetBlindRotations) List(ctx context.Context, f *rotation.ListFilter) ([]*rotation.Record, error) {
+	*r.calls++
+	if *r.calls > 10 {
+		return nil, errors.New("listOpenWindows kept paging a store that ignores Offset")
+	}
+	blind := *f
+	blind.Offset = 0
+	return r.Store.List(ctx, &blind)
+}
+
+func TestListOpenWindowsStopsWhenAStoreIgnoresOffset(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		_, eng := setup(t, s)
+		k := create(t, eng, "t1", nil)
+		now := time.Now()
+		want := seedWindows(t, s, k.Key.ID, openWindowPage, now)
+
+		calls := 0
+		blindEng, err := keysmith.NewEngine(keysmith.WithStore(offsetBlindStore{Store: s, calls: &calls}))
+		require.NoError(t, err)
+
+		got, err := listOpenWindows(context.Background(), blindEng, k.Key.ID, now)
+		require.NoError(t, err)
+		// Every window once, from one full page and one that added nothing.
+		assert.ElementsMatch(t, want, windowIDs(got))
+		assert.Len(t, got, openWindowPage)
+		assert.Equal(t, 2, calls)
 	})
 }
