@@ -1,9 +1,13 @@
 package contract
 
 import (
+	"context"
 	"strings"
 
+	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
+
+	"github.com/xraph/keysmith"
 )
 
 const (
@@ -32,10 +36,14 @@ func requireUser(p dashcontract.Principal) (string, error) {
 //
 // READ THIS BEFORE CHANGING IT. It is the most dangerous function here.
 //
-// A scope helper ported from keysmith's templ dashboard compiles, runs, and
-// silently returns the empty string on this path: nothing on the contract
-// path puts a tenant into the request context, so a context-based lookup
-// finds nothing, forever.
+// Do not read the tenant from the request context. A scope helper ported
+// from keysmith's templ dashboard would do that, and what it finds is not
+// ours to trust: keysmith itself puts nothing there on the contract path, so
+// a bare host leaves it empty, while a host such as authsome's dashboard
+// bridge sets a forge Scope for the session's own org and app. Neither is
+// the tenant this function resolves. Once a handler has the tenant from
+// here, it hands the engine engineCtx, which overrides whatever the request
+// carried.
 //
 // The empty string is not a harmless zero. An empty TenantID in a store
 // filter matches EVERY tenant's rows rather than none, so a handler that
@@ -115,4 +123,21 @@ func appFrom(p dashcontract.Principal, deps Deps) (string, error) {
 		return s, nil
 	}
 	return deps.DefaultAppID, nil
+}
+
+// engineCtx is the context a handler hands the engine for a write that
+// stamps a tenant on what it creates. The engine reads the tenant from the
+// context and prefers a forge Scope over keysmith.WithTenant, so setting
+// only WithTenant loses to any Scope the host put on the request (authsome's
+// dashboard bridge sets one for the session's org on every request). The key
+// would then be checked against this tenant's policy and scopes, stored
+// under another, and never shown in this tenant's list. Setting both, to the
+// tenant and app the contract resolved, means the engine reads the same
+// answer whichever it looks at.
+//
+// An empty app still gets an org scope: keysmith never filters by app, and
+// an org-level Scope is what makes the engine take the tenant from it.
+func engineCtx(ctx context.Context, app, tenant string) context.Context {
+	ctx = keysmith.WithTenant(ctx, app, tenant)
+	return forge.WithScope(ctx, forge.NewOrgScope(app, tenant))
 }

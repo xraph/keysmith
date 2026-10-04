@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
@@ -382,4 +383,51 @@ func TestKeysCreateMapsAPolicyDeletedMidFlightLikeAMissingOne(t *testing.T) {
 	deps, _ := setup(t, createMemoryStore())
 	err := deps.mapCreateError("keys.create", fmt.Errorf("get policy: %w", keysmith.ErrPolicyNotFound))
 	assert.Equal(t, "policy not found", badRequestMessage(t, err))
+}
+
+// The engine reads the tenant from the context, and it prefers a forge Scope
+// over keysmith.WithTenant. A host that sets a forge Scope on every request
+// (authsome's dashboard bridge does) must not decide where a key lands: the
+// contract resolved the tenant, so the key goes there and the contract's own
+// reads find it.
+func TestKeysCreateUsesTheContractTenantWhateverForgeScopeTheRequestCarries(t *testing.T) {
+	scopes := map[string]forge.Scope{
+		"org scope": forge.NewOrgScope("app_x", "org_other"),
+		"app scope": forge.NewAppScope("app_x"),
+	}
+	for name, sc := range scopes {
+		t.Run(name, func(t *testing.T) {
+			storetest.Each(t, func(t *testing.T, s store.Store) {
+				deps, eng := setup(t, s)
+				mkScope(t, eng, "t1", "read", "")
+				p := user(map[string]any{"tenant_id": "t1", "app_id": "app9"})
+				ctx := forge.WithScope(context.Background(), sc)
+
+				out, err := keysCreateHandler(deps)(ctx, validCreate(), p)
+				require.NoError(t, err)
+
+				stored, err := s.Keys().Get(context.Background(), createMustKeyID(t, out.Key.ID))
+				require.NoError(t, err)
+				assert.Equal(t, "t1", stored.TenantID)
+				assert.Equal(t, "app9", stored.AppID)
+
+				list, err := keysListHandler(deps)(ctx, keysListRequest{}, p)
+				require.NoError(t, err)
+				require.Len(t, list.Keys, 1)
+				assert.Equal(t, out.Key.ID, list.Keys[0].ID)
+
+				detail, err := keysDetailHandler(deps)(ctx, keysDetailRequest{ID: out.Key.ID}, p)
+				require.NoError(t, err)
+				assert.Equal(t, out.Key.ID, detail.Key.ID)
+
+				// The engine checks scope names in the tenant it resolved, so
+				// a scope of the contract's tenant must be accepted.
+				in := validCreate()
+				in.Scopes = []string{"read"}
+				scoped, err := keysCreateHandler(deps)(ctx, in, p)
+				require.NoError(t, err)
+				assert.Equal(t, []string{"read"}, scoped.Key.Scopes)
+			})
+		})
+	}
 }

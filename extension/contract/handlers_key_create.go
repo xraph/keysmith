@@ -157,7 +157,7 @@ func keysCreateHandler(deps Deps) func(context.Context, keysCreateRequest, dashc
 			policyID = &pid
 		}
 
-		created, err := deps.Engine.CreateKey(keysmith.WithTenant(ctx, app, tenant), &keysmith.CreateKeyInput{
+		created, err := deps.Engine.CreateKey(engineCtx(ctx, app, tenant), &keysmith.CreateKeyInput{
 			Name:        name,
 			Description: in.Description,
 			Prefix:      in.Prefix,
