@@ -67,6 +67,8 @@ func (s *scopeStore) Update(ctx context.Context, sc *scope.Scope) error {
 	return nil
 }
 
+// Delete removes the scope and every key's assignment of it, as the SQL
+// stores' cascade does, so no join row is left pointing at a missing scope.
 func (s *scopeStore) Delete(ctx context.Context, scopeID id.ScopeID) error {
 	res, err := s.mdb.NewDelete((*scopeModel)(nil)).
 		Filter(bson.M{"_id": scopeID.String()}).
@@ -76,6 +78,13 @@ func (s *scopeStore) Delete(ctx context.Context, scopeID id.ScopeID) error {
 	}
 	if res.DeletedCount() == 0 {
 		return errNotFound("scope")
+	}
+	_, err = s.mdb.NewDelete((*keyScopeModel)(nil)).
+		Filter(bson.M{"scope_id": scopeID.String()}).
+		Many().
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("keysmith/mongo: delete scope assignments: %w", err)
 	}
 	return nil
 }

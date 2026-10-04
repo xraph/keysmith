@@ -747,15 +747,24 @@ func (s *scopeStore) Update(_ context.Context, sc *scope.Scope) error {
 	return nil
 }
 
+// Delete removes the scope and takes its name off every key in its tenant,
+// as the SQL stores' cascade does. Without that, a scope later created under
+// the same name would be granted to those keys again.
 func (s *scopeStore) Delete(_ context.Context, scopeID id.ScopeID) error {
 	st := s.store()
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	if _, ok := st.scopes[scopeID.String()]; !ok {
+	sc, ok := st.scopes[scopeID.String()]
+	if !ok {
 		return errNotFound("scope")
 	}
 	delete(st.scopes, scopeID.String())
+	for kid, names := range st.keyScopes {
+		if k, ok := st.keys[kid]; ok && k.TenantID == sc.TenantID {
+			delete(names, sc.Name)
+		}
+	}
 	return nil
 }
 
