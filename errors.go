@@ -34,6 +34,14 @@ var (
 	// ErrPolicyInUse is returned when deleting a policy assigned to active keys.
 	ErrPolicyInUse = errors.New("keysmith: policy is assigned to active keys")
 
+	// ErrPolicyNameTaken is returned when a policy is created or renamed to a
+	// name another policy in the same tenant already has.
+	ErrPolicyNameTaken = errors.New("keysmith: a policy with this name already exists in the tenant")
+
+	// ErrScopeNameTaken is returned when a scope is created with a name
+	// another scope in the same tenant already has.
+	ErrScopeNameTaken = errors.New("keysmith: a scope with this name already exists in the tenant")
+
 	// ErrPolicyNotFound is returned when a policy cannot be found.
 	ErrPolicyNotFound = store.ErrPolicyNotFound
 

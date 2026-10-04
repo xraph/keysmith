@@ -440,6 +440,9 @@ func (e *Engine) ListKeys(ctx context.Context, filter *key.ListFilter) ([]*key.K
 // CreatePolicy creates a new key policy.
 func (e *Engine) CreatePolicy(ctx context.Context, pol *policy.Policy) error {
 	sc := scopeFromContext(ctx)
+	if err := e.checkPolicyName(ctx, sc.tenantID, pol.Name, nil); err != nil {
+		return err
+	}
 	pol.ID = id.NewPolicyID()
 	pol.TenantID = sc.tenantID
 	pol.AppID = sc.appID
@@ -460,12 +463,33 @@ func (e *Engine) GetPolicy(ctx context.Context, polID id.PolicyID) (*policy.Poli
 
 // UpdatePolicy updates an existing policy.
 func (e *Engine) UpdatePolicy(ctx context.Context, pol *policy.Policy) error {
+	if err := e.checkPolicyName(ctx, pol.TenantID, pol.Name, &pol.ID); err != nil {
+		return err
+	}
 	pol.UpdatedAt = time.Now()
 	if err := e.store.Policies().Update(ctx, pol); err != nil {
 		return fmt.Errorf("update policy: %w", err)
 	}
 	_ = e.hooks.FirePolicyUpdated(ctx, pol)
 	return nil
+}
+
+// checkPolicyName refuses a name another policy in the tenant already has.
+// self is the policy being updated, which may keep its own name; it is nil on
+// create. The unique (tenant_id, name) index on the SQL and mongo backends
+// stays as the backstop for two writes that race past this check.
+func (e *Engine) checkPolicyName(ctx context.Context, tenantID, name string, self *id.PolicyID) error {
+	found, err := e.store.Policies().GetByName(ctx, tenantID, name)
+	switch {
+	case errors.Is(err, ErrPolicyNotFound):
+		return nil
+	case err != nil:
+		return fmt.Errorf("check policy name: %w", err)
+	case self != nil && found.ID.String() == self.String():
+		return nil
+	default:
+		return ErrPolicyNameTaken
+	}
 }
 
 // DeletePolicy deletes a policy by ID.
@@ -496,6 +520,12 @@ func (e *Engine) ListPolicies(ctx context.Context, filter *policy.ListFilter) ([
 // CreateScope creates a permission scope.
 func (e *Engine) CreateScope(ctx context.Context, s *scope.Scope) error {
 	sc := scopeFromContext(ctx)
+	switch _, err := e.store.Scopes().GetByName(ctx, sc.tenantID, s.Name); {
+	case err == nil:
+		return ErrScopeNameTaken
+	case !errors.Is(err, ErrScopeNotFound):
+		return fmt.Errorf("check scope name: %w", err)
+	}
 	s.ID = id.NewScopeID()
 	s.TenantID = sc.tenantID
 	s.AppID = sc.appID

@@ -71,3 +71,12 @@ func TestEmptyAllowedScopesAllowsAnyExistingScope(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
+
+func TestCreateScopeRefusesADuplicateNameInTheTenant(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		eng, ctx := newEngine(t, s)
+		require.NoError(t, eng.CreateScope(ctx, &scope.Scope{Name: "read"}))
+		require.ErrorIs(t, eng.CreateScope(ctx, &scope.Scope{Name: "read"}), keysmith.ErrScopeNameTaken)
+		require.NoError(t, eng.CreateScope(keysmith.WithTenant(context.Background(), "app1", "t2"), &scope.Scope{Name: "read"}))
+	})
+}
