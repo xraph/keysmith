@@ -492,14 +492,19 @@ func (e *Engine) checkPolicyName(ctx context.Context, tenantID, name string, sel
 	}
 }
 
-// DeletePolicy deletes a policy by ID.
+// DeletePolicy deletes a policy by ID. It refuses with ErrPolicyInUse while
+// any key that is not revoked uses the policy. A revoked key never validates
+// again and cannot be deleted, so it does not hold the policy; it keeps the
+// policy's ID after the delete.
 func (e *Engine) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
 	keys, err := e.store.Keys().ListByPolicy(ctx, polID)
 	if err != nil {
 		return fmt.Errorf("list keys by policy: %w", err)
 	}
-	if len(keys) > 0 {
-		return ErrPolicyInUse
+	for _, k := range keys {
+		if k.State != key.StateRevoked {
+			return ErrPolicyInUse
+		}
 	}
 	if err := e.store.Policies().Delete(ctx, polID); err != nil {
 		return fmt.Errorf("delete policy: %w", err)

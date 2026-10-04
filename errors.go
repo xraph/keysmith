@@ -31,8 +31,9 @@ var (
 	// ErrInvalidStateTransition is returned for illegal key state changes.
 	ErrInvalidStateTransition = errors.New("keysmith: invalid state transition")
 
-	// ErrPolicyInUse is returned when deleting a policy assigned to active keys.
-	ErrPolicyInUse = errors.New("keysmith: policy is assigned to active keys")
+	// ErrPolicyInUse is returned when deleting a policy that a key which is
+	// not revoked (active, suspended or expired) still uses.
+	ErrPolicyInUse = errors.New("keysmith: policy is used by keys that are not revoked")
 
 	// ErrPolicyNameTaken is returned when a policy is created or renamed to a
 	// name another policy in the same tenant already has.
