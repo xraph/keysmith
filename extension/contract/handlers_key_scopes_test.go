@@ -89,8 +89,10 @@ func TestKeysScopesAssignScopeErrors(t *testing.T) {
 			Name: "bound", Prefix: "sk", Environment: key.EnvLive, PolicyID: &pol.ID,
 		})
 
-		_, err := scopesAssign(deps, scopesReq(plain.Key.ID, "read", "nope"))
-		assert.Equal(t, `scope "nope" does not exist in this tenant`, badRequestMessage(t, err))
+		// "zzz" sorts after "read", so "read" is checked first: a refusal
+		// that still assigned it would show below.
+		_, err := scopesAssign(deps, scopesReq(plain.Key.ID, "read", "zzz"))
+		assert.Equal(t, `scope "zzz" does not exist in this tenant`, badRequestMessage(t, err))
 
 		_, err = scopesAssign(deps, scopesReq(plain.Key.ID, "theirs"))
 		assert.Equal(t, `scope "theirs" does not exist in this tenant`, badRequestMessage(t, err))

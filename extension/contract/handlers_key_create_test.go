@@ -364,7 +364,7 @@ func TestKeysCreateThenListAndDetailNeverCarryTheRawKey(t *testing.T) {
 	})
 }
 
-func TestKeysCreateIsDispatchedAsAWriteCommand(t *testing.T) {
+func TestKeysCreateIsDispatched(t *testing.T) {
 	deps, _ := setup(t, createMemoryStore())
 	d := createTestDispatcher(t, deps)
 	req := dashcontract.Request{

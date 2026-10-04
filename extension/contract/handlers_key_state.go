@@ -43,10 +43,15 @@ func stateConflict(message string) error {
 	return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: message}
 }
 
-// keyStateChange is what the three state commands share: resolve the
-// caller, load the key for the tenant, refuse by state, call the engine, and
-// answer the key as stored afterwards. None of them carries a secret, so a
-// failed reload after the engine call can answer an error.
+// keyStateChange is what five commands share: revoke, suspend, reactivate,
+// and the two scope commands, assign and remove. It resolves the caller,
+// runs validate, loads the key for the tenant, refuses by state, calls
+// apply, and answers the key as stored afterwards. None of them carries a
+// secret, so a failed reload after the engine call can answer an error.
+//
+// validate runs before the load and before apply. The scope commands rely on
+// that order: their validate closure is where `names` is filled, and their
+// apply closure reads it.
 func keyStateChange(
 	ctx context.Context, deps Deps, p dashcontract.Principal,
 	intent, rawID, conflict string,
