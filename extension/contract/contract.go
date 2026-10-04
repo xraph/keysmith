@@ -87,6 +87,9 @@ func Register(
 		{"policies.list", func() error {
 			return dispatcher.RegisterQuery(d, c, "policies.list", 1, policiesListHandler(deps))
 		}},
+		{"policies.detail", func() error {
+			return dispatcher.RegisterQuery(d, c, "policies.detail", 1, policiesDetailHandler(deps))
+		}},
 		{"scopes.list", func() error {
 			return dispatcher.RegisterQuery(d, c, "scopes.list", 1, scopesListHandler(deps))
 		}},

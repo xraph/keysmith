@@ -7,9 +7,12 @@ import (
 	"strings"
 	"time"
 
+	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
+
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/policy"
 	"github.com/xraph/keysmith/rotation"
 )
 
@@ -33,8 +36,9 @@ func requireID(raw string) (id.KeyID, error) {
 
 // loadKeyForTenant loads the key and answers keyNotFound() when it does not
 // exist OR belongs to another tenant, so the two are indistinguishable.
-// Every by-ID handler, read or write, goes through it.
-func loadKeyForTenant(ctx context.Context, deps Deps, tenant, rawID string) (*key.Key, error) {
+// Every by-ID handler, read or write, goes through it. intent is the
+// caller's, so an internal error is logged against the request that hit it.
+func loadKeyForTenant(ctx context.Context, deps Deps, tenant, rawID, intent string) (*key.Key, error) {
 	kid, err := requireID(rawID)
 	if err != nil {
 		return nil, err
@@ -44,12 +48,54 @@ func loadKeyForTenant(ctx context.Context, deps Deps, tenant, rawID string) (*ke
 		if errors.Is(err, keysmith.ErrKeyNotFound) {
 			return nil, keyNotFound()
 		}
-		return nil, deps.mapError("keys.load", err)
+		return nil, deps.mapError(intent, err)
 	}
 	if k.TenantID != tenant {
 		return nil, keyNotFound()
 	}
 	return k, nil
+}
+
+// requirePolicyID trims raw and parses it as a policy ID. Empty answers
+// BAD_REQUEST "id is required"; unparseable answers BAD_REQUEST "id is not a
+// policy id".
+func requirePolicyID(raw string) (id.PolicyID, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return id.PolicyID{}, badRequest("id is required")
+	}
+	pid, err := id.ParsePolicyID(raw)
+	if err != nil {
+		return id.PolicyID{}, badRequest("id is not a policy id")
+	}
+	return pid, nil
+}
+
+// policyNotFound is the one error every by-ID policy handler returns for a
+// policy that does not exist and for one that belongs to another tenant.
+func policyNotFound() error {
+	return &dashcontract.Error{Code: dashcontract.CodeNotFound, Message: "policy not found"}
+}
+
+// loadPolicyForTenant loads the policy and answers policyNotFound() when it
+// does not exist OR belongs to another tenant, so the two cannot be told
+// apart. intent is the caller's, for the internal error log.
+func loadPolicyForTenant(ctx context.Context, deps Deps, tenant, rawID, intent string) (*policy.Policy, error) {
+	pid, err := requirePolicyID(rawID)
+	if err != nil {
+		return nil, err
+	}
+	pol, err := deps.Engine.GetPolicy(ctx, pid)
+	if err != nil {
+		if errors.Is(err, keysmith.ErrPolicyNotFound) {
+			return nil, policyNotFound()
+		}
+		return nil, deps.mapError(intent, err)
+	}
+	if pol.TenantID != tenant {
+		return nil, policyNotFound()
+	}
+	return pol, nil
 }
 
 // listOpenWindows pages through ListRotations for the key until a short

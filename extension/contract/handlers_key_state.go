@@ -72,7 +72,7 @@ func keyStateChange(
 			return keyResponse{}, verr
 		}
 	}
-	k, err := loadKeyForTenant(ctx, deps, tenant, rawID)
+	k, err := loadKeyForTenant(ctx, deps, tenant, rawID, intent)
 	if err != nil {
 		return keyResponse{}, err
 	}
@@ -86,7 +86,7 @@ func keyStateChange(
 		return keyResponse{}, mapErr(intent, aerr)
 	}
 	kid := k.ID
-	k, err = loadKeyForTenant(ctx, deps, tenant, kid.String())
+	k, err = loadKeyForTenant(ctx, deps, tenant, kid.String(), intent)
 	if err != nil {
 		return keyResponse{}, err
 	}

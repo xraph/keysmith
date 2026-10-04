@@ -148,7 +148,7 @@ func keysDetailHandler(deps Deps) func(context.Context, keysDetailRequest, dashc
 		if err != nil {
 			return keysDetailResponse{}, err
 		}
-		k, err := loadKeyForTenant(ctx, deps, tenant, in.ID)
+		k, err := loadKeyForTenant(ctx, deps, tenant, in.ID, "keys.detail")
 		if err != nil {
 			return keysDetailResponse{}, err
 		}

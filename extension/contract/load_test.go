@@ -9,13 +9,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
+	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/policy"
 	"github.com/xraph/keysmith/rotation"
 	"github.com/xraph/keysmith/store"
+	"github.com/xraph/keysmith/store/memory"
 )
 
 func TestRequireID(t *testing.T) {
@@ -53,19 +57,19 @@ func TestLoadKeyForTenant(t *testing.T) {
 		mine := create(t, eng, "t1", nil)
 		theirs := create(t, eng, "t2", nil)
 
-		k, err := loadKeyForTenant(context.Background(), deps, "t1", mine.Key.ID.String())
+		k, err := loadKeyForTenant(context.Background(), deps, "t1", mine.Key.ID.String(), "keys.detail")
 		require.NoError(t, err)
 		assert.Equal(t, mine.Key.ID, k.ID)
 
-		_, otherTenant := loadKeyForTenant(context.Background(), deps, "t1", theirs.Key.ID.String())
-		_, missing := loadKeyForTenant(context.Background(), deps, "t1", id.NewKeyID().String())
+		_, otherTenant := loadKeyForTenant(context.Background(), deps, "t1", theirs.Key.ID.String(), "keys.detail")
+		_, missing := loadKeyForTenant(context.Background(), deps, "t1", id.NewKeyID().String(), "keys.detail")
 		require.Error(t, otherTenant)
 		assert.Equal(t, dashcontract.CodeNotFound, codeOf(t, otherTenant))
 		// Another tenant's key and a key that does not exist are the same answer.
 		assert.Equal(t, missing, otherTenant)
 		assert.Equal(t, keyNotFound(), otherTenant)
 
-		_, err = loadKeyForTenant(context.Background(), deps, "t1", "")
+		_, err = loadKeyForTenant(context.Background(), deps, "t1", "", "keys.detail")
 		assert.Equal(t, dashcontract.CodeBadRequest, codeOf(t, err))
 	})
 }
@@ -224,4 +228,44 @@ func TestListOpenWindowsStopsWhenAStoreIgnoresOffset(t *testing.T) {
 		assert.Len(t, got, openWindowPage)
 		assert.Equal(t, 2, calls)
 	})
+}
+
+// loadFailingKeys fails every Get the way a dropped connection would.
+type loadFailingKeys struct{ key.Store }
+
+func (loadFailingKeys) Get(context.Context, id.KeyID) (*key.Key, error) {
+	return nil, errors.New("dial tcp 10.0.0.1: connection reset")
+}
+
+// A loader that fails logs the intent that called it, not a label of its
+// own, so an operator can tell which request hit the failure.
+func TestLoadersLogTheCallersIntent(t *testing.T) {
+	s := memory.New()
+	_, eng := setup(t, s)
+	k := create(t, eng, "t1", nil)
+	pol := mkPolicy(t, eng, "t1", &policy.Policy{Name: "p"})
+
+	var lines []rotateLogLine
+	logger := rotateCapturingLogger{Logger: forge.NewNoopLogger(), lines: &lines}
+
+	keysBroken, err := keysmith.NewEngine(keysmith.WithStore(stateRaceStore{Store: s, keys: loadFailingKeys{s.Keys()}}))
+	require.NoError(t, err)
+	deps := Deps{Engine: keysBroken, DefaultTenantID: "t1", Logger: logger}
+	_, err = keysDetailHandler(deps)(context.Background(), keysDetailRequest{ID: k.Key.ID.String()}, principal())
+	assert.Equal(t, dashcontract.CodeInternal, codeOf(t, err))
+	_, err = loadKeyForTenant(context.Background(), deps, "t1", k.Key.ID.String(), "keys.revoke")
+	assert.Equal(t, dashcontract.CodeInternal, codeOf(t, err))
+
+	polsBroken, err := keysmith.NewEngine(keysmith.WithStore(rotateStore{Store: s, pols: rotateFailingPolicies{s.Policies()}}))
+	require.NoError(t, err)
+	deps.Engine = polsBroken
+	_, err = policiesDetailHandler(deps)(context.Background(), policyIDRequest{ID: pol.ID.String()}, principal())
+	assert.Equal(t, dashcontract.CodeInternal, codeOf(t, err))
+	assert.NotContains(t, err.Error(), "secret-connection-detail")
+
+	intents := make([]string, 0, len(lines))
+	for _, l := range lines {
+		intents = append(intents, l.fields["intent"])
+	}
+	assert.Equal(t, []string{"keys.detail", "keys.revoke", "policies.detail"}, intents)
 }

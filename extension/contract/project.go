@@ -1,6 +1,8 @@
 package contract
 
 import (
+	"slices"
+	"sort"
 	"time"
 
 	"github.com/xraph/keysmith/key"
@@ -53,6 +55,31 @@ type PolicySummary struct {
 	MaxKeyLifetimeSeconds *int64   `json:"maxKeyLifetimeSeconds"`
 	GraceSeconds          *int64   `json:"graceSeconds"`
 	AllowedScopes         []string `json:"allowedScopes"` // never nil
+}
+
+// PolicyDetail is every policy field the editor and the detail page show.
+// Counts and durations follow PolicyRef: zero means unset to the engine, so
+// it goes out as an explicit null. Lists go out sorted, without duplicates,
+// and as [] when empty, never null. Durations are whole seconds.
+type PolicyDetail struct {
+	ID                     string   `json:"id"`
+	Name                   string   `json:"name"`
+	Description            string   `json:"description,omitempty"`
+	MaxKeyLifetimeSeconds  *int64   `json:"maxKeyLifetimeSeconds"`
+	GraceSeconds           *int64   `json:"graceSeconds"`
+	AllowedScopes          []string `json:"allowedScopes"`
+	RateLimit              *int64   `json:"rateLimit"`
+	RateLimitWindowSeconds *int64   `json:"rateLimitWindowSeconds"`
+	BurstLimit             *int64   `json:"burstLimit"`
+	AllowedIPs             []string `json:"allowedIps"`
+	AllowedOrigins         []string `json:"allowedOrigins"`
+	AllowedMethods         []string `json:"allowedMethods"`
+	AllowedPaths           []string `json:"allowedPaths"`
+	RotationPeriodSeconds  *int64   `json:"rotationPeriodSeconds"`
+	DailyQuota             *int64   `json:"dailyQuota"`
+	MonthlyQuota           *int64   `json:"monthlyQuota"`
+	CreatedAt              string   `json:"createdAt"`
+	UpdatedAt              string   `json:"updatedAt"`
 }
 
 // ScopeSummary is a scope as the key forms' picker shows it.
@@ -145,6 +172,47 @@ func projectPolicySummary(p *policy.Policy) PolicySummary {
 		GraceSeconds:          secondsOrNil(p.GracePeriod),
 		AllowedScopes:         allowed,
 	}
+}
+
+func projectPolicyDetail(p *policy.Policy) PolicyDetail {
+	return PolicyDetail{
+		ID:                     p.ID.String(),
+		Name:                   p.Name,
+		Description:            p.Description,
+		MaxKeyLifetimeSeconds:  secondsOrNil(p.MaxKeyLifetime),
+		GraceSeconds:           secondsOrNil(p.GracePeriod),
+		AllowedScopes:          sortedUnique(p.AllowedScopes),
+		RateLimit:              countOrNil(int64(p.RateLimit)),
+		RateLimitWindowSeconds: secondsOrNil(p.RateLimitWindow),
+		BurstLimit:             countOrNil(int64(p.BurstLimit)),
+		AllowedIPs:             sortedUnique(p.AllowedIPs),
+		AllowedOrigins:         sortedUnique(p.AllowedOrigins),
+		AllowedMethods:         sortedUnique(p.AllowedMethods),
+		AllowedPaths:           sortedUnique(p.AllowedPaths),
+		RotationPeriodSeconds:  secondsOrNil(p.RotationPeriod),
+		DailyQuota:             countOrNil(p.DailyQuota),
+		MonthlyQuota:           countOrNil(p.MonthlyQuota),
+		CreatedAt:              rfc3339(p.CreatedAt),
+		UpdatedAt:              rfc3339(p.UpdatedAt),
+	}
+}
+
+// sortedUnique is a sorted copy of in without duplicates, and [] for nil.
+// It never sorts in in place: in may be a store's shared state.
+func sortedUnique(in []string) []string {
+	out := make([]string, len(in))
+	copy(out, in)
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
+// countOrNil is nil for zero, which the engine treats as unset, the way
+// secondsOrNil treats a zero duration.
+func countOrNil(n int64) *int64 {
+	if n == 0 {
+		return nil
+	}
+	return &n
 }
 
 // secondsOrNil is nil for a zero duration, which the engine treats as unset.

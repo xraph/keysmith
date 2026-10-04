@@ -350,11 +350,15 @@ func TestKeysCreateThenListAndDetailNeverCarryTheRawKey(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, out.Key, detail.Key)
 
+		raw := out.RawKey
 		for name, v := range map[string]any{"list": list, "detail": detail} {
 			b, merr := json.Marshal(v)
 			require.NoError(t, merr)
-			assert.NotContains(t, string(b), out.RawKey, "%s carries the raw key", name)
-			assert.NotContains(t, string(b), "rawKey", name)
+			body := string(b)
+			// assert.NotContains would print the body and the key on failure,
+			// so only the lengths go in the message.
+			assert.False(t, strings.Contains(body, raw), "%s response of %d bytes carries the raw key", name, len(body))
+			assert.NotContains(t, body, "rawKey", name)
 		}
 
 		// The create response itself is the one place it appears.

@@ -72,7 +72,7 @@ func keysRotateHandler(deps Deps) func(context.Context, keysRotateRequest, dashc
 		// Every read happens before RotateKey. Once the engine has returned
 		// the new raw key, nothing that can fail may cost the caller that key:
 		// the old one would be on a clock and the new one lost.
-		k, err := loadKeyForTenant(ctx, deps, tenant, in.ID)
+		k, err := loadKeyForTenant(ctx, deps, tenant, in.ID, intent)
 		if err != nil {
 			return keysRotateResponse{}, err
 		}
@@ -168,7 +168,7 @@ func keysEndGraceHandler(deps Deps) func(context.Context, keysEndGraceRequest, d
 		if _, uerr := requireUser(p); uerr != nil {
 			return keysEndGraceResponse{}, uerr
 		}
-		k, err := loadKeyForTenant(ctx, deps, tenant, in.ID)
+		k, err := loadKeyForTenant(ctx, deps, tenant, in.ID, intent)
 		if err != nil {
 			return keysEndGraceResponse{}, err
 		}
@@ -177,7 +177,7 @@ func keysEndGraceHandler(deps Deps) func(context.Context, keysEndGraceRequest, d
 			return keysEndGraceResponse{}, deps.mapError(intent, err)
 		}
 		// Answer the key as stored now, not the copy read before the write.
-		k, err = loadKeyForTenant(ctx, deps, tenant, in.ID)
+		k, err = loadKeyForTenant(ctx, deps, tenant, in.ID, intent)
 		if err != nil {
 			return keysEndGraceResponse{}, err
 		}

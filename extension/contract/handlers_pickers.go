@@ -25,6 +25,9 @@ type pickerRequest struct {
 type policiesListResponse struct {
 	Policies []PolicySummary `json:"policies"`
 	HasMore  bool            `json:"hasMore"`
+	// RateLimiterConfigured tells the create form whether a rate limit it
+	// sets is enforced in this deployment or only stored.
+	RateLimiterConfigured bool `json:"rateLimiterConfigured"`
 }
 
 type scopesListResponse struct {
@@ -72,7 +75,11 @@ func policiesListHandler(deps Deps) func(context.Context, pickerRequest, dashcon
 		for _, r := range rows {
 			out = append(out, projectPolicySummary(r))
 		}
-		return policiesListResponse{Policies: out, HasMore: hasMore}, nil
+		return policiesListResponse{
+			Policies:              out,
+			HasMore:               hasMore,
+			RateLimiterConfigured: deps.Engine.RateLimiterConfigured(),
+		}, nil
 	}
 }
 
