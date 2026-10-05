@@ -298,5 +298,57 @@ func init() {
 			// restore.
 			Down: func(context.Context, migrate.Executor) error { return nil },
 		},
+		// Usage and rotation pages sort newest first with the id breaking
+		// ties. MongoDB cannot finish a sort that an index covers only in
+		// part, so without these indexes every page, and the one-row
+		// check for whether a tenant recorded any usage, reads and sorts the
+		// tenant's whole history. The earlier migrations already shipped, so
+		// the indexes arrive here; fresh installs get them from both, and
+		// CreateIndexes is idempotent for an identical spec.
+		&migrate.Migration{
+			Name:    "add_keysmith_stable_sort_indexes",
+			Version: "20261005000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				for _, col := range []string{colUsage, colRotations} {
+					if err := mexec.CreateIndexes(ctx, col, stableSortIndexes()); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				// The driver's default names for the two specs.
+				for _, col := range []string{colUsage, colRotations} {
+					for _, name := range []string{"tenant_id_1_created_at_-1__id_-1", "key_id_1_created_at_-1__id_-1"} {
+						err := mexec.DB().Collection(col).Indexes().DropOne(ctx, name)
+						var cmdErr mongo.CommandError
+						if errors.As(err, &cmdErr) && cmdErr.Code == 27 { // 27: IndexNotFound
+							continue
+						}
+						if err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			},
+		},
 	)
+}
+
+// stableSortIndexes serve a newest-first page, {created_at: -1, _id: -1},
+// filtered by tenant or by key, straight off the index with no sort stage.
+func stableSortIndexes() []mongo.IndexModel {
+	return []mongo.IndexModel{
+		{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}},
+		{Keys: bson.D{{Key: "key_id", Value: 1}, {Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}},
+	}
 }

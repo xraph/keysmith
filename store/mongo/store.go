@@ -143,14 +143,14 @@ func migrationIndexes() map[string][]mongod.IndexModel {
 			{Keys: bson.D{{Key: "key_id", Value: 1}}},
 			{Keys: bson.D{{Key: "scope_id", Value: 1}}},
 		},
-		colUsage: {
+		colUsage: append([]mongod.IndexModel{
 			{Keys: bson.D{{Key: "key_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}},
-		},
-		colRotations: {
+		}, stableSortIndexes()...),
+		colRotations: append([]mongod.IndexModel{
 			{Keys: bson.D{{Key: "key_id", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "grace_ends", Value: 1}}},
 			{Keys: bson.D{{Key: "old_key_hash", Value: 1}}},
-		},
+		}, stableSortIndexes()...),
 	}
 }

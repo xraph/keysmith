@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/rotation"
+	"github.com/xraph/keysmith/usage"
 )
 
 // openTestStore opens a throwaway database on KEYSMITH_TEST_MONGO_URI and
@@ -105,4 +107,142 @@ func TestCloseLegacyGraceWindows(t *testing.T) {
 	got, err := s.Rotations().Get(ctx, modern.ID)
 	require.NoError(t, err)
 	assert.True(t, got.GraceEnds.Equal(ends), "a hinted rotation keeps its window")
+}
+
+// planOf explains a newest-first find on col, as the usage and rotation
+// pages run it, and answers every stage and index name in the winning plan.
+func planOf(t *testing.T, s *Store, col string, filter bson.D, limit, skip int64) (stages, indexes []string) {
+	t.Helper()
+	cmd := bson.D{
+		{Key: "explain", Value: bson.D{
+			{Key: "find", Value: col},
+			{Key: "filter", Value: filter},
+			{Key: "sort", Value: bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}},
+			{Key: "limit", Value: limit},
+			{Key: "skip", Value: skip},
+		}},
+		{Key: "verbosity", Value: "queryPlanner"},
+	}
+	var out bson.D
+	require.NoError(t, s.mdb.Database().RunCommand(context.Background(), cmd).Decode(&out))
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case bson.D:
+			for _, e := range x {
+				switch e.Key {
+				case "stage":
+					stages = append(stages, fmt.Sprint(e.Value))
+				case "indexName":
+					indexes = append(indexes, fmt.Sprint(e.Value))
+				}
+				walk(e.Value)
+			}
+		case bson.M:
+			for k, e := range x {
+				walk(bson.D{{Key: k, Value: e}})
+			}
+		case bson.A:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	var planner any
+	for _, e := range out {
+		if e.Key == "queryPlanner" {
+			planner = e.Value
+		}
+	}
+	require.NotNil(t, planner, "explain answered no queryPlanner")
+	for _, e := range planner.(bson.D) {
+		if e.Key == "winningPlan" {
+			walk(e.Value)
+		}
+	}
+	require.NotEmpty(t, stages, "no winning plan in the explain output")
+	return stages, indexes
+}
+
+// MongoDB cannot sort a prefix of an index and finish the rest in memory, so
+// a sort on {created_at, _id} that no index covers reads and sorts the
+// tenant's whole history, even for one row. These indexes let the newest
+// page, and usageRecorded's single row, come straight off the index.
+func TestStableSortIndexesServeNewestFirstPages(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	keyID := id.NewKeyID()
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	for i := range 20 {
+		require.NoError(t, s.Usages().Record(ctx, &usage.Record{
+			ID: id.NewUsageID(), KeyID: keyID, TenantID: "t1", Endpoint: "/x", Method: "GET",
+			StatusCode: 200, CreatedAt: at.Add(-time.Duration(i) * time.Minute),
+		}))
+		require.NoError(t, s.Rotations().Create(ctx, &rotation.Record{
+			ID: id.NewRotationID(), KeyID: keyID, TenantID: "t1", OldKeyHash: "h", NewKeyHash: "n",
+			Reason: rotation.ReasonManual, GraceEnds: at, CreatedAt: at.Add(-time.Duration(i) * time.Minute),
+		}))
+	}
+	since := at.Add(-time.Hour)
+	for _, tc := range []struct {
+		name   string
+		col    string
+		filter bson.D
+		index  string
+	}{
+		{"usage by tenant", colUsage, bson.D{{Key: "tenant_id", Value: "t1"}}, "tenant_id_1_created_at_-1__id_-1"},
+		{"usage by tenant and range", colUsage, bson.D{{Key: "tenant_id", Value: "t1"}, {Key: "created_at", Value: bson.D{{Key: "$gte", Value: since}}}}, "tenant_id_1_created_at_-1__id_-1"},
+		{"usage by key", colUsage, bson.D{{Key: "key_id", Value: keyID.String()}, {Key: "tenant_id", Value: "t1"}}, ""},
+		{"rotations by tenant", colRotations, bson.D{{Key: "tenant_id", Value: "t1"}}, "tenant_id_1_created_at_-1__id_-1"},
+		{"rotations by key", colRotations, bson.D{{Key: "key_id", Value: keyID.String()}, {Key: "tenant_id", Value: "t1"}}, ""},
+	} {
+		for _, page := range []struct{ limit, skip int64 }{{1, 0}, {26, 25}} {
+			stages, indexes := planOf(t, s, tc.col, tc.filter, page.limit, page.skip)
+			t.Logf("%s, limit %d skip %d: stages %v, indexes %v", tc.name, page.limit, page.skip, stages, indexes)
+			assert.NotContains(t, stages, "SORT", "%s %v: %v", tc.name, page, stages)
+			assert.Contains(t, stages, "IXSCAN", "%s %v: %v", tc.name, page, stages)
+			if tc.index != "" {
+				assert.Contains(t, indexes, tc.index, "%s %v", tc.name, page)
+			} else {
+				// Either stable-sort index serves a key and tenant filter;
+				// the planner picks whichever is narrower.
+				assert.Subset(t, []string{"tenant_id_1_created_at_-1__id_-1", "key_id_1_created_at_-1__id_-1"}, indexes, "%s %v", tc.name, page)
+			}
+		}
+	}
+}
+
+func indexNames(t *testing.T, s *Store, col string) []string {
+	t.Helper()
+	specs, err := s.mdb.Collection(col).Indexes().ListSpecifications(context.Background())
+	require.NoError(t, err)
+	names := make([]string, 0, len(specs))
+	for _, sp := range specs {
+		names = append(names, sp.Name)
+	}
+	return names
+}
+
+// Deployments that applied the usage and rotation migrations before the
+// stable sort get the indexes from this one.
+func TestStableSortIndexMigrationAddsAndDropsItsIndexes(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	m := migrationByVersion(t, "20261005000001")
+	exec := mongomigrate.New(s.mdb)
+	want := []string{"tenant_id_1_created_at_-1__id_-1", "key_id_1_created_at_-1__id_-1"}
+
+	require.NoError(t, m.Down(ctx, exec))
+	require.NoError(t, m.Down(ctx, exec), "a second down finds nothing to drop and is fine")
+	for _, col := range []string{colUsage, colRotations} {
+		for _, name := range want {
+			assert.NotContains(t, indexNames(t, s, col), name, col)
+		}
+	}
+
+	require.NoError(t, m.Up(ctx, exec))
+	require.NoError(t, m.Up(ctx, exec), "up again is a no-op")
+	for _, col := range []string{colUsage, colRotations} {
+		assert.Subset(t, indexNames(t, s, col), want, col)
+	}
 }

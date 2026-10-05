@@ -105,11 +105,13 @@ func TestPagingRotationsReturnsEveryRowOnce(t *testing.T) {
 
 		for range 5 {
 			seen := map[string]int{}
+			var order []string
 			for offset := 0; ; offset += 33 {
 				page, err := s.Rotations().List(ctx, &rotation.ListFilter{TenantID: "t1", Limit: 33, Offset: offset})
 				require.NoError(t, err)
 				for _, r := range page {
 					seen[r.ID.String()]++
+					order = append(order, r.ID.String())
 				}
 				if len(page) < 33 {
 					break
@@ -119,6 +121,10 @@ func TestPagingRotationsReturnsEveryRowOnce(t *testing.T) {
 			for rid, n := range seen {
 				require.True(t, want[rid], "only t1's rotations")
 				require.Equal(t, 1, n, "rotation %s came back %d times", rid, n)
+			}
+			// Every row shares one created_at, so the id alone orders them.
+			for i := 1; i < len(order); i++ {
+				require.Greater(t, order[i-1], order[i], "row %d is not below row %d in id order", i, i-1)
 			}
 		}
 	})
