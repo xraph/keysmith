@@ -641,8 +641,14 @@ func (s *rotationStore) List(_ context.Context, filter *rotation.ListFilter) ([]
 		cp := *r
 		result = append(result, &cp)
 	}
+	// Newest first with the ID breaking ties, as the SQL and mongo stores
+	// order them. A map ranges in a random order, so without a total order
+	// paging by offset could skip a row or repeat one.
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].CreatedAt.After(result[j].CreatedAt)
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.After(result[j].CreatedAt)
+		}
+		return result[i].ID.String() > result[j].ID.String()
 	})
 	offset, limit := 0, 0
 	if filter != nil {

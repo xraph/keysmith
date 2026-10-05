@@ -58,7 +58,7 @@ func (s *rotationStore) List(ctx context.Context, filter *rotation.ListFilter) (
 
 	q := s.mdb.NewFind(&models).
 		Filter(f).
-		Sort(bson.D{{Key: "created_at", Value: -1}})
+		Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
 
 	if filter != nil {
 		if filter.Limit > 0 {

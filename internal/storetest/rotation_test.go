@@ -79,3 +79,47 @@ func TestEndGraceClosesEveryOpenWindow(t *testing.T) {
 		assert.NoError(t, err, "another key's window must stay open")
 	})
 }
+
+// Paging a tenant's rotations by offset returns every row exactly once, even
+// when they all share one created_at, so the order has to be total. The
+// Rotations page pages these.
+func TestPagingRotationsReturnsEveryRowOnce(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		// The SQL stores need the key rows the records reference.
+		mine, theirs := newKey("t1"), newKey("t2")
+		require.NoError(t, s.Keys().Create(ctx, mine))
+		require.NoError(t, s.Keys().Create(ctx, theirs))
+		want := map[string]bool{}
+		for range 250 {
+			r := rec(mine.ID, "old-"+id.NewRotationID().String(), now.Add(time.Hour))
+			r.CreatedAt = now
+			require.NoError(t, s.Rotations().Create(ctx, r))
+			want[r.ID.String()] = true
+		}
+		other := rec(theirs.ID, "old-theirs", now.Add(time.Hour))
+		other.TenantID = "t2"
+		other.CreatedAt = now
+		require.NoError(t, s.Rotations().Create(ctx, other))
+
+		for range 5 {
+			seen := map[string]int{}
+			for offset := 0; ; offset += 33 {
+				page, err := s.Rotations().List(ctx, &rotation.ListFilter{TenantID: "t1", Limit: 33, Offset: offset})
+				require.NoError(t, err)
+				for _, r := range page {
+					seen[r.ID.String()]++
+				}
+				if len(page) < 33 {
+					break
+				}
+			}
+			require.Len(t, seen, len(want))
+			for rid, n := range seen {
+				require.True(t, want[rid], "only t1's rotations")
+				require.Equal(t, 1, n, "rotation %s came back %d times", rid, n)
+			}
+		}
+	})
+}

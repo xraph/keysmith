@@ -38,7 +38,7 @@ func (s *rotationStore) Get(ctx context.Context, rotID id.RotationID) (*rotation
 
 func (s *rotationStore) List(ctx context.Context, filter *rotation.ListFilter) ([]*rotation.Record, error) {
 	var models []rotationModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC, id DESC")
 
 	if filter != nil {
 		if filter.KeyID != nil {
