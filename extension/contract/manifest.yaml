@@ -17,6 +17,11 @@ intents:
   - { name: scopes.list,   kind: query, version: 1, capability: read }
   # Newest first. keyId is a filter: another tenant's key answers [].
   - { name: rotations.list, kind: query, version: 1, capability: read }
+  # Every UTC bucket in range, empty ones included, at most 400. keyId is a
+  # filter here too: another tenant's key answers empty buckets.
+  - { name: usage.series, kind: query, version: 1, capability: read }
+  # Newest first, with the total that match.
+  - { name: usage.records, kind: query, version: 1, capability: read }
   # Answers a raw key, once (keys.rotate is the other). overview arrives in a
   # later slice; the loader does not check invalidates names.
   - { name: keys.create, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview, policies.detail] }
@@ -60,4 +65,10 @@ queries:
     cache: { staleTime: 30s }
   rotationsList:
     intent: rotations.list
+    cache: { staleTime: 30s }
+  usageSeries:
+    intent: usage.series
+    cache: { staleTime: 30s }
+  usageRecords:
+    intent: usage.records
     cache: { staleTime: 30s }

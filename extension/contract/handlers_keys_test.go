@@ -22,6 +22,7 @@ import (
 	"github.com/xraph/keysmith/scope"
 	"github.com/xraph/keysmith/store"
 	"github.com/xraph/keysmith/store/memory"
+	"github.com/xraph/keysmith/usage"
 )
 
 func principal() dashcontract.Principal {
@@ -189,7 +190,23 @@ func TestNoQueryResponseCarriesASecret(t *testing.T) {
 		rotations, err := rotationsListHandler(deps)(context.Background(), rotationsListRequest{}, principal())
 		require.NoError(t, err)
 		require.Len(t, rotations.Items, 1)
-		for _, v := range []any{list, detail, policies, polDetail, rotations} {
+		// A usage row for each key, so usage.series and usage.records have
+		// something to answer.
+		for _, kid := range []id.KeyID{r.Key.ID, rotated.Key.ID} {
+			require.NoError(t, eng.RecordUsage(context.Background(), &usage.Record{
+				KeyID: kid, TenantID: "t1", Endpoint: "/v1/things", Method: "GET", StatusCode: 200,
+			}))
+		}
+		now := time.Now()
+		series, err := usageSeriesHandler(deps)(context.Background(), usageSeriesRequest{
+			Period: "hourly", After: rfc3339(now.Add(-time.Hour)), Before: rfc3339(now.Add(time.Hour)),
+		}, principal())
+		require.NoError(t, err)
+		require.True(t, series.Recorded)
+		records, err := usageRecordsHandler(deps)(context.Background(), usageRecordsRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, records.Items, 2)
+		for _, v := range []any{list, detail, policies, polDetail, rotations, series, records} {
 			b, err := json.Marshal(v)
 			require.NoError(t, err)
 			body := string(b)

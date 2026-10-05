@@ -96,6 +96,12 @@ func Register(
 		{"rotations.list", func() error {
 			return dispatcher.RegisterQuery(d, c, "rotations.list", 1, rotationsListHandler(deps))
 		}},
+		{"usage.series", func() error {
+			return dispatcher.RegisterQuery(d, c, "usage.series", 1, usageSeriesHandler(deps))
+		}},
+		{"usage.records", func() error {
+			return dispatcher.RegisterQuery(d, c, "usage.records", 1, usageRecordsHandler(deps))
+		}},
 		{"keys.create", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps))
 		}},
