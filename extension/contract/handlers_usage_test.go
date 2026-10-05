@@ -542,12 +542,6 @@ func TestUsageRecordsProjectEveryField(t *testing.T) {
 
 func TestUsageRecordsAreNewestFirst(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
-		if storetest.Name(t) == "memory" {
-			// The memory store's Query answers rows in the order they were
-			// recorded, oldest first; the other three order by created_at
-			// DESC. Reported as a store bug and not worked around here.
-			t.Skip("memory usage Query is not newest first (store bug, reported)")
-		}
 		deps, eng := setup(t, s)
 		k := create(t, eng, "t1", nil)
 		t0 := usTime(t, "2026-03-10T10:00:00Z")

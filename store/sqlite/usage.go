@@ -49,7 +49,7 @@ func (s *usageStore) RecordBatch(ctx context.Context, recs []*usage.Record) erro
 
 func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*usage.Record, error) {
 	var models []usageModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC, id DESC")
 
 	if filter != nil {
 		if filter.KeyID != nil {

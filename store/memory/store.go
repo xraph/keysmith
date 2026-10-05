@@ -442,6 +442,15 @@ func (s *usageStore) Query(_ context.Context, filter *usage.QueryFilter) ([]*usa
 		cp := *rec
 		result = append(result, &cp)
 	}
+	// Newest first with the ID breaking ties, as the SQL and mongo stores
+	// order them. Rows are kept in the order they were recorded, so without
+	// this sort a page would start with the oldest.
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.After(result[j].CreatedAt)
+		}
+		return result[i].ID.String() > result[j].ID.String()
+	})
 	offset, limit := 0, 0
 	if filter != nil {
 		offset, limit = filter.Offset, filter.Limit

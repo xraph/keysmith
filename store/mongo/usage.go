@@ -68,7 +68,7 @@ func (s *usageStore) Query(ctx context.Context, filter *usage.QueryFilter) ([]*u
 
 	q := s.mdb.NewFind(&models).
 		Filter(f).
-		Sort(bson.D{{Key: "created_at", Value: -1}})
+		Sort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}})
 
 	if filter != nil {
 		if filter.Limit > 0 {

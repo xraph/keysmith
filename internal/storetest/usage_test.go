@@ -133,3 +133,43 @@ func TestAggregateRangeIsAfterInclusiveBeforeExclusive(t *testing.T) {
 		assert.EqualValues(t, 1, until[0].RequestCount)
 	})
 }
+
+// Usage rows often share a created_at (a burst of requests, or mongo's
+// millisecond precision), so paging by offset needs a total order or a row
+// can come back twice or never.
+func TestPagingUsageReturnsEveryRowOnce(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		// The SQL stores need the key rows the records reference.
+		mine, theirs := newKey("t1"), newKey("t2")
+		require.NoError(t, s.Keys().Create(ctx, mine))
+		require.NoError(t, s.Keys().Create(ctx, theirs))
+		want := map[string]bool{}
+		for range 250 {
+			r := usageAt(mine.ID, "t1", now, 200, 0)
+			require.NoError(t, s.Usages().Record(ctx, r))
+			want[r.ID.String()] = true
+		}
+		require.NoError(t, s.Usages().Record(ctx, usageAt(theirs.ID, "t2", now, 200, 0)))
+
+		for range 5 {
+			seen := map[string]int{}
+			for offset := 0; ; offset += 33 {
+				page, err := s.Usages().Query(ctx, &usage.QueryFilter{TenantID: "t1", Limit: 33, Offset: offset})
+				require.NoError(t, err)
+				for _, r := range page {
+					seen[r.ID.String()]++
+				}
+				if len(page) < 33 {
+					break
+				}
+			}
+			require.Len(t, seen, len(want))
+			for uid, n := range seen {
+				require.True(t, want[uid], "only t1's usage")
+				require.Equal(t, 1, n, "usage row %s came back %d times", uid, n)
+			}
+		}
+	})
+}
