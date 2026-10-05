@@ -22,8 +22,11 @@ intents:
   - { name: usage.series, kind: query, version: 1, capability: read }
   # Newest first, with the total that match.
   - { name: usage.records, kind: query, version: 1, capability: read }
-  # Answers a raw key, once (keys.rotate is the other). overview arrives in a
-  # later slice; the loader does not check invalidates names.
+  # Keys by state, open windows, keys expiring within 7 days, requests in the
+  # last 24h (null when the tenant has never recorded usage), the 5 newest
+  # keys and rotations, and how many policy fields this deployment enforces.
+  - { name: overview, kind: query, version: 1, capability: read }
+  # Answers a raw key, once (keys.rotate is the other).
   - { name: keys.create, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview, policies.detail] }
   # Answers a raw key, once.
   - { name: keys.rotate, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, rotations.list, overview] }
@@ -71,4 +74,7 @@ queries:
     cache: { staleTime: 30s }
   usageRecords:
     intent: usage.records
+    cache: { staleTime: 30s }
+  overview:
+    intent: overview
     cache: { staleTime: 30s }

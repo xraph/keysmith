@@ -63,7 +63,7 @@ func rotationsListHandler(deps Deps) func(context.Context, rotationsListRequest,
 			recs = recs[:limit]
 		}
 
-		keys, err := rotationKeys(ctx, deps, tenant, recs)
+		keys, err := rotationKeys(ctx, deps, tenant, recs, "rotations.list")
 		if err != nil {
 			return rotationsListResponse{}, err
 		}
@@ -79,8 +79,8 @@ func rotationsListHandler(deps Deps) func(context.Context, rotationsListRequest,
 // rotationKeys loads each distinct key the records name, once, and keeps it
 // only when it belongs to tenant. A key that is gone, or that belongs to
 // another tenant, maps to nil, which projects as a null name. At most one
-// read per row, bounded by the page cap.
-func rotationKeys(ctx context.Context, deps Deps, tenant string, recs []*rotation.Record) (map[string]*key.Key, error) {
+// read per distinct key. intent labels a failure in the server log.
+func rotationKeys(ctx context.Context, deps Deps, tenant string, recs []*rotation.Record, intent string) (map[string]*key.Key, error) {
 	keys := make(map[string]*key.Key, len(recs))
 	for _, r := range recs {
 		kid := r.KeyID.String()
@@ -92,7 +92,7 @@ func rotationKeys(ctx context.Context, deps Deps, tenant string, recs []*rotatio
 		case errors.Is(err, keysmith.ErrKeyNotFound):
 			k = nil
 		case err != nil:
-			return nil, deps.mapError("rotations.list", err)
+			return nil, deps.mapError(intent, err)
 		case k.TenantID != tenant:
 			k = nil
 		}

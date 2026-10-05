@@ -102,6 +102,9 @@ func Register(
 		{"usage.records", func() error {
 			return dispatcher.RegisterQuery(d, c, "usage.records", 1, usageRecordsHandler(deps))
 		}},
+		{"overview", func() error {
+			return dispatcher.RegisterQuery(d, c, "overview", 1, overviewHandler(deps))
+		}},
 		{"keys.create", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps))
 		}},

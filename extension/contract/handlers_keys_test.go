@@ -206,7 +206,11 @@ func TestNoQueryResponseCarriesASecret(t *testing.T) {
 		records, err := usageRecordsHandler(deps)(context.Background(), usageRecordsRequest{}, principal())
 		require.NoError(t, err)
 		require.Len(t, records.Items, 2)
-		for _, v := range []any{list, detail, policies, polDetail, rotations, series, records} {
+		overview, err := overviewHandler(deps)(context.Background(), overviewRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, overview.RecentKeys, 1)
+		require.Len(t, overview.RecentRotations, 1)
+		for _, v := range []any{list, detail, policies, polDetail, rotations, series, records, overview} {
 			b, err := json.Marshal(v)
 			require.NoError(t, err)
 			body := string(b)
