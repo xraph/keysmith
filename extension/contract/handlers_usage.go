@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 
 	"github.com/xraph/keysmith/id"
@@ -103,9 +104,14 @@ func usageSeriesHandler(deps Deps) func(context.Context, usageSeriesRequest, das
 		first, _ := usage.Truncate(*after, in.Period)
 		starts, ok := usageBucketStarts(first, *before, in.Period)
 		if !ok {
+			// Monthly is already the longest period, so only a shorter range
+			// helps there.
+			advice := "choose a longer period or a shorter range"
+			if in.Period == usage.PeriodMonthly {
+				advice = "choose a shorter range"
+			}
 			return usageSeriesResponse{}, badRequest(fmt.Sprintf(
-				"this range has more than %d %s buckets; choose a longer period or a shorter range",
-				maxUsageBuckets, in.Period))
+				"this range has more than %d %s buckets; %s", maxUsageBuckets, in.Period, advice))
 		}
 		kid, err := parseUsageKeyID(in.KeyID)
 		if err != nil {
@@ -120,7 +126,7 @@ func usageSeriesHandler(deps Deps) func(context.Context, usageSeriesRequest, das
 		if err != nil {
 			return usageSeriesResponse{}, deps.mapError("usage.series", err)
 		}
-		recorded, err := deps.Engine.Store().Usages().Count(ctx, &usage.QueryFilter{TenantID: tenant})
+		recorded, err := usageRecorded(ctx, deps, tenant)
 		if err != nil {
 			return usageSeriesResponse{}, deps.mapError("usage.series", err)
 		}
@@ -132,13 +138,24 @@ func usageSeriesHandler(deps Deps) func(context.Context, usageSeriesRequest, das
 		}
 		for _, a := range aggs {
 			// Every row in [first, before) truncates to one of the starts.
-			// Anything else is not in the range and is not drawn.
-			if b, ok := byStart[a.PeriodStart.Unix()]; ok {
-				b.requests += a.RequestCount
-				b.errs += a.ErrorCount
-				b.serverErrs += a.ServerErrorCount
-				b.latency += a.TotalLatency
+			// A start that is not one of them means the store bucketed in
+			// another zone or unit. The page still answers without it, and
+			// the operator hears about it.
+			b, ok := byStart[a.PeriodStart.Unix()]
+			if !ok {
+				if deps.Logger != nil {
+					deps.Logger.Warn("keysmith/contract: usage store answered a bucket outside the requested ones",
+						forge.F("intent", "usage.series"),
+						forge.F("period", in.Period),
+						forge.F("start", a.PeriodStart.UTC().Format(time.RFC3339)),
+					)
+				}
+				continue
 			}
+			b.requests += a.RequestCount
+			b.errs += a.ErrorCount
+			b.serverErrs += a.ServerErrorCount
+			b.latency += a.TotalLatency
 		}
 		buckets := make([]UsageBucket, 0, len(starts))
 		for _, s := range starts {
@@ -156,7 +173,7 @@ func usageSeriesHandler(deps Deps) func(context.Context, usageSeriesRequest, das
 			}
 			buckets = append(buckets, out)
 		}
-		return usageSeriesResponse{Period: in.Period, Buckets: buckets, Recorded: recorded > 0}, nil
+		return usageSeriesResponse{Period: in.Period, Buckets: buckets, Recorded: recorded}, nil
 	}
 }
 
@@ -212,6 +229,18 @@ func usageRecordsHandler(deps Deps) func(context.Context, usageRecordsRequest, d
 		}
 		return usageRecordsResponse{Items: items, Total: total}, nil
 	}
+}
+
+// usageRecorded reports whether tenant has any usage row at all, at any
+// time and for any key. It asks for one row rather than counting them, since
+// the usage table is the largest keysmith has. The error is the store's; the
+// caller maps it.
+func usageRecorded(ctx context.Context, deps Deps, tenant string) (bool, error) {
+	recs, err := deps.Engine.QueryUsage(ctx, &usage.QueryFilter{TenantID: tenant, Limit: 1})
+	if err != nil {
+		return false, err
+	}
+	return len(recs) > 0, nil
 }
 
 // parseUsageTime reads an RFC3339 time from the request field name, in UTC.

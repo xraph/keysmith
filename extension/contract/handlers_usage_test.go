@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 
 	"github.com/xraph/keysmith/id"
@@ -379,7 +380,7 @@ func TestUsageSeriesValidatesInOrder(t *testing.T) {
 		{"401 days", usageSeriesRequest{Period: "daily", After: "2026-01-01T00:00:00Z", Before: "2027-02-06T00:00:00Z"},
 			"this range has more than 400 daily buckets; choose a longer period or a shorter range"},
 		{"401 months", usageSeriesRequest{Period: "monthly", After: "2000-01-01T00:00:00Z", Before: "2033-05-02T00:00:00Z"},
-			"this range has more than 400 monthly buckets; choose a longer period or a shorter range"},
+			"this range has more than 400 monthly buckets; choose a shorter range"},
 		{"bad key", usageSeriesRequest{Period: "hourly", After: on, Before: next, KeyID: "nope"}, "keyId is not a key id"},
 	} {
 		_, err := usSeries(deps, tc.in)
@@ -435,17 +436,19 @@ func TestUsageSeriesHandsTheStoreTheWholeFirstBucket(t *testing.T) {
 	assert.True(t, f.After.Equal(usTime(t, "2026-03-11T00:00:00Z")), "after truncated to its UTC day: %s", f.After)
 	assert.True(t, f.Before.Equal(usTime(t, "2026-03-13T00:00:00Z")))
 
-	// recorded asks about the tenant over all time and every key.
-	require.Len(t, spy.counts, 1)
-	assert.Equal(t, usage.QueryFilter{TenantID: "t1"}, spy.counts[0])
+	// recorded asks for one row of the tenant's, over all time and every
+	// key, and never counts them all.
+	require.Len(t, spy.queries, 1)
+	assert.Equal(t, usage.QueryFilter{TenantID: "t1", Limit: 1}, spy.queries[0])
+	assert.Empty(t, spy.counts)
 }
 
 func TestUsageSeriesAnswersInternalWhenTheStoreFails(t *testing.T) {
 	req := usageSeriesRequest{Period: "hourly", After: "2026-03-10T10:00:00Z", Before: "2026-03-10T12:00:00Z"}
-	for _, fail := range []string{"aggregate", "count"} {
+	for _, fail := range []string{"aggregate", "query"} {
 		deps, spy := usSpied(t)
 		spy.failAggregate = fail == "aggregate"
-		spy.failCount = fail == "count"
+		spy.failQuery = fail == "query"
 		_, err := usSeries(deps, req)
 		assert.Equal(t, dashcontract.CodeInternal, codeOf(t, err), fail)
 		assert.NotContains(t, err.Error(), "10.0.0.1", fail)
@@ -728,4 +731,101 @@ func TestUsageIntentsAreDispatchedAsReadQueries(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &records))
 	assert.Equal(t, []string{rec.ID.String()}, usRecordIDs(records.Items))
 	assert.EqualValues(t, 1, records.Total)
+}
+
+func TestUsageRecordedAsksForOneRowOfTheTenants(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		k := create(t, eng, "t1", nil)
+		theirs := create(t, eng, "t2", nil)
+
+		got, err := usageRecorded(context.Background(), deps, "t1")
+		require.NoError(t, err)
+		assert.False(t, got, "no rows at all")
+
+		usSeed(t, s, "t2", theirs.Key.ID, usTime(t, "2026-03-10T10:00:00Z"), 200, 0)
+		got, err = usageRecorded(context.Background(), deps, "t1")
+		require.NoError(t, err)
+		assert.False(t, got, "another tenant's rows do not count")
+
+		usSeed(t, s, "t1", k.Key.ID, usTime(t, "2020-06-01T00:00:00Z"), 500, 0)
+		usSeed(t, s, "t1", k.Key.ID, usTime(t, "2020-06-01T00:01:00Z"), 200, 0)
+		got, err = usageRecorded(context.Background(), deps, "t1")
+		require.NoError(t, err)
+		assert.True(t, got, "any row, at any time, whatever its status")
+	})
+
+	deps, spy := usSpied(t)
+	_, err := usageRecorded(context.Background(), deps, "t1")
+	require.NoError(t, err)
+	require.Len(t, spy.queries, 1)
+	assert.Equal(t, usage.QueryFilter{TenantID: "t1", Limit: 1}, spy.queries[0])
+	assert.Empty(t, spy.counts)
+
+	spy.failQuery = true
+	_, err = usageRecorded(context.Background(), deps, "t1")
+	assert.ErrorIs(t, err, errUsageStoreDown, "the caller maps the error")
+}
+
+// usMisaligned answers its aggregates as given, whatever the filter.
+type usMisaligned struct {
+	usage.Store
+	aggs []*usage.Aggregation
+}
+
+func (w usMisaligned) Aggregate(context.Context, *usage.QueryFilter) ([]*usage.Aggregation, error) {
+	return w.aggs, nil
+}
+
+// usWarnLogger keeps every Warn call and drops everything else.
+type usWarnLogger struct {
+	forge.Logger
+	lines *[]rotateLogLine
+}
+
+func (l usWarnLogger) Warn(msg string, fields ...forge.Field) {
+	line := rotateLogLine{msg: msg, fields: map[string]string{}}
+	for _, f := range fields {
+		line.fields[f.Key()] = fmt.Sprint(f.Value())
+	}
+	*l.lines = append(*l.lines, line)
+}
+
+// A bucket start the handler did not list means the store truncated in some
+// other zone or unit. The page still answers, with that bucket left out, and
+// the operator hears about it.
+func TestUsageSeriesWarnsAboutAMisalignedBucketAndKeepsAnswering(t *testing.T) {
+	base := memory.New()
+	fake := usMisaligned{Store: base.Usages(), aggs: []*usage.Aggregation{
+		{TenantID: "t1", Period: "hourly", PeriodStart: usTime(t, "2026-03-10T10:00:00Z"), RequestCount: 2, TotalLatency: 8},
+		{TenantID: "t1", Period: "hourly", PeriodStart: usTime(t, "2026-03-10T10:30:00Z"), RequestCount: 5, ErrorCount: 5},
+	}}
+	deps, _ := setup(t, usageStoreWith{Store: base, usages: fake})
+	var lines []rotateLogLine
+	deps.Logger = usWarnLogger{Logger: forge.NewNoopLogger(), lines: &lines}
+	req := usageSeriesRequest{Period: "hourly", After: "2026-03-10T10:00:00Z", Before: "2026-03-10T12:00:00Z"}
+
+	out, err := usSeries(deps, req)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{2, 0}, usRequests(out.Buckets))
+	assert.EqualValues(t, 2, out.Buckets[0].Succeeded, "the stray bucket's errors land nowhere")
+	require.Len(t, lines, 1)
+	assert.Equal(t, "usage.series", lines[0].fields["intent"])
+	assert.Equal(t, "hourly", lines[0].fields["period"])
+	assert.Equal(t, "2026-03-10T10:30:00Z", lines[0].fields["start"])
+
+	// Without a logger it still answers.
+	deps.Logger = nil
+	out, err = usSeries(deps, req)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{2, 0}, usRequests(out.Buckets))
+
+	// Aligned buckets log nothing.
+	lines = nil
+	fake.aggs = fake.aggs[:1]
+	deps, _ = setup(t, usageStoreWith{Store: base, usages: fake})
+	deps.Logger = usWarnLogger{Logger: forge.NewNoopLogger(), lines: &lines}
+	_, err = usSeries(deps, req)
+	require.NoError(t, err)
+	assert.Empty(t, lines)
 }
