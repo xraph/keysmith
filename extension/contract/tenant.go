@@ -104,6 +104,18 @@ func tenantFrom(p dashcontract.Principal, deps Deps) (string, error) {
 	}
 }
 
+// tenantSourceOf says where tenantFrom took the tenant from: "claim" when
+// the principal carries a tenant_id claim, "config" when it fell back to
+// Deps.DefaultTenantID. Call it only after tenantFrom has answered: a claim
+// that is present but unusable refuses there, so here a present claim is a
+// claim tenantFrom used.
+func tenantSourceOf(p dashcontract.Principal, _ Deps) string {
+	if _, present := p.Claims[tenantClaim]; present {
+		return "claim"
+	}
+	return "config"
+}
+
 // appFrom resolves the app that labels rows the caller creates. The result
 // may be empty: keysmith never filters by app, so a missing app only leaves
 // a new row unlabelled and cannot widen what any read returns. A claim that

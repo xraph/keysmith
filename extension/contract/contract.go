@@ -41,8 +41,8 @@ type Deps struct {
 	DefaultAppID string
 
 	// Plugins names the hook plugins the host registered. The settings
-	// intent (a later slice) lists them, and the key detail uses it to
-	// decide whether to link to Warden.
+	// intent lists them, and the key detail uses it to decide whether to
+	// link to Warden.
 	Plugins []string
 
 	// Logger receives the server-side detail of internal errors. It may be
@@ -104,6 +104,9 @@ func Register(
 		}},
 		{"overview", func() error {
 			return dispatcher.RegisterQuery(d, c, "overview", 1, overviewHandler(deps))
+		}},
+		{"settings", func() error {
+			return dispatcher.RegisterQuery(d, c, "settings", 1, settingsHandler(deps))
 		}},
 		{"keys.create", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps))

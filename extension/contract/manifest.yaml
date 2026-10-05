@@ -26,6 +26,10 @@ intents:
   # last 24h (null when the tenant has never recorded usage), the 5 newest
   # keys and rotations, and how many policy fields this deployment enforces.
   - { name: overview, kind: query, version: 1, capability: read }
+  # Hook plugins, whether the store answers (never its error), whether a rate
+  # limiter is configured, where the tenant came from, what of a policy is
+  # enforced, and the 24h grace a rotation gets when nothing names one.
+  - { name: settings, kind: query, version: 1, capability: read }
   # Answers a raw key, once (keys.rotate is the other).
   - { name: keys.create, kind: command, version: 1, capability: write, invalidates: [keys.list, keys.detail, overview, policies.detail] }
   # Answers a raw key, once.
@@ -78,3 +82,6 @@ queries:
   overview:
     intent: overview
     cache: { staleTime: 30s }
+  settings:
+    intent: settings
+    cache: { staleTime: 60s }
