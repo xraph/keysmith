@@ -271,7 +271,12 @@ func TestRotationsListProjectsAKeyThatIsGoneOrForeignAsNull(t *testing.T) {
 			assert.Nil(t, it.KeyName, it.ID)
 			assert.Nil(t, it.Prefix, it.ID)
 			assert.Nil(t, it.Environment, it.ID)
-			assert.True(t, it.WindowOpen, it.ID)
+			// Both records have a hint and a window still ahead, yet neither
+			// is open. ValidateKey finds the grace record and then loads its
+			// key, so once the key row is gone the old key no longer
+			// validates. A key outside this tenant is not this tenant's open
+			// window to show either.
+			assert.False(t, it.WindowOpen, it.ID)
 			assert.Equal(t, "a3f8", it.OldHint, it.ID)
 
 			b, err := json.Marshal(it)
@@ -311,21 +316,25 @@ func TestRotationsListWindowsAndGrace(t *testing.T) {
 		now := time.Now()
 		open := rotSeed(t, s, "t1", k.Key.ID, rotation.ReasonManual, now.Add(-time.Minute), 90*time.Minute)
 		closed := rotSeed(t, s, "t1", k.Key.ID, rotation.ReasonManual, now.Add(-3*time.Hour), time.Hour)
-		zero := rotSeed(t, s, "t1", k.Key.ID, rotation.ReasonCompromise, now.Add(-4*time.Hour), 0)
+		// A zero-grace rotation made just now: its window ends the moment it
+		// starts. Seeded at the current time, so a check that compared
+		// loosely (or against CreatedAt plus anything) would read it open.
+		zero := rotSeed(t, s, "t1", k.Key.ID, rotation.ReasonCompromise, time.Now(), 0)
 
 		out, err := rotList(deps, rotationsListRequest{})
 		require.NoError(t, err)
-		require.Equal(t, []string{open.ID.String(), closed.ID.String(), zero.ID.String()}, rotIDs(out.Items))
+		require.Equal(t, []string{zero.ID.String(), open.ID.String(), closed.ID.String()}, rotIDs(out.Items))
 
-		assert.True(t, out.Items[0].WindowOpen)
-		assert.EqualValues(t, 5400, out.Items[0].GraceSeconds)
-		assert.False(t, out.Items[1].WindowOpen)
-		assert.EqualValues(t, 3600, out.Items[1].GraceSeconds)
-		assert.False(t, out.Items[2].WindowOpen)
-		assert.EqualValues(t, 0, out.Items[2].GraceSeconds)
-		assert.Equal(t, out.Items[2].RotatedAt, out.Items[2].GraceEnds)
+		z, o, c := out.Items[0], out.Items[1], out.Items[2]
+		assert.True(t, o.WindowOpen)
+		assert.EqualValues(t, 5400, o.GraceSeconds)
+		assert.False(t, c.WindowOpen)
+		assert.EqualValues(t, 3600, c.GraceSeconds)
+		assert.False(t, z.WindowOpen, "a zero-grace rotation is never open")
+		assert.EqualValues(t, 0, z.GraceSeconds)
+		assert.Equal(t, z.RotatedAt, z.GraceEnds)
 
-		b, err := json.Marshal(out.Items[2])
+		b, err := json.Marshal(z)
 		require.NoError(t, err)
 		assert.Contains(t, string(b), `"graceSeconds":0`, "zero grace is a real value, not unset")
 	})

@@ -120,7 +120,9 @@ type RotationItem struct {
 	// zero-grace rotation, not unset, so it goes out as 0, never null.
 	GraceSeconds int64  `json:"graceSeconds"`
 	GraceEnds    string `json:"graceEnds"`
-	// WindowOpen is true while the previous key still validates.
+	// WindowOpen is true while the previous key still validates: the key
+	// exists in this tenant, the record has an old hint, and GraceEnds is
+	// ahead of now.
 	WindowOpen bool   `json:"windowOpen"`
 	RotatedBy  string `json:"rotatedBy,omitempty"`
 	RotatedAt  string `json:"rotatedAt"` // the record's CreatedAt
@@ -130,11 +132,14 @@ type RotationItem struct {
 // nil when it no longer exists in the caller's tenant; the caller decides
 // that, so k is used as given.
 //
-// A window is open only while GraceEnds is ahead of now AND the record has
-// an old hint. A hintless record was written before the grace fix, when
-// RotateKey recorded a window but killed the old key at once, and the
-// engine's ValidateKey never honours it. keys.detail's previousKeys draws
-// the same line, so the two pages agree.
+// A window is open only while GraceEnds is ahead of now, the record has an
+// old hint, and k is not nil. A hintless record was written before the grace
+// fix, when RotateKey recorded a window but killed the old key at once, and
+// the engine's ValidateKey never honours it; keys.detail's previousKeys
+// draws the same line, so the two pages agree. ValidateKey also loads the
+// rotated key after finding the grace record, so once the key is gone the
+// old key stops validating too, and a key outside the tenant is never this
+// tenant's window to show.
 func projectRotationItem(r *rotation.Record, k *key.Key, now time.Time) RotationItem {
 	it := RotationItem{
 		ID:           r.ID.String(),
@@ -144,7 +149,7 @@ func projectRotationItem(r *rotation.Record, k *key.Key, now time.Time) Rotation
 		Reason:       string(r.Reason),
 		GraceSeconds: int64(r.GraceTTL / time.Second),
 		GraceEnds:    rfc3339(r.GraceEnds),
-		WindowOpen:   r.OldHint != "" && r.GraceEnds.After(now),
+		WindowOpen:   k != nil && r.OldHint != "" && r.GraceEnds.After(now),
 		RotatedBy:    r.RotatedBy,
 		RotatedAt:    rfc3339(r.CreatedAt),
 	}
