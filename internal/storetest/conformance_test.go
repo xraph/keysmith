@@ -82,6 +82,44 @@ func TestEmptyTenantFilterMatchesEveryTenant(t *testing.T) {
 	})
 }
 
+// Keys created in the same instant still page cleanly: every row comes back
+// exactly once however many times you walk the pages.
+func TestPagingKeysReturnsEveryRowOnce(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		want := map[string]bool{}
+		for range 250 {
+			k := newKey("t1")
+			k.CreatedAt, k.UpdatedAt = now, now
+			require.NoError(t, s.Keys().Create(ctx, k))
+			want[k.ID.String()] = true
+		}
+		theirs := newKey("t2")
+		theirs.CreatedAt, theirs.UpdatedAt = now, now
+		require.NoError(t, s.Keys().Create(ctx, theirs))
+
+		for range 5 {
+			seen := map[string]int{}
+			for offset := 0; ; offset += 33 {
+				page, err := s.Keys().List(ctx, &key.ListFilter{TenantID: "t1", Limit: 33, Offset: offset})
+				require.NoError(t, err)
+				for _, k := range page {
+					seen[k.ID.String()]++
+				}
+				if len(page) < 33 {
+					break
+				}
+			}
+			require.Len(t, seen, len(want))
+			for kid, n := range seen {
+				require.True(t, want[kid], "only t1's keys")
+				require.Equal(t, 1, n, "key %s came back %d times", kid, n)
+			}
+		}
+	})
+}
+
 func keyIDs(ks []*key.Key) []string {
 	out := make([]string, len(ks))
 	for i, k := range ks {

@@ -125,7 +125,7 @@ func (s *keyStore) Delete(ctx context.Context, keyID id.KeyID) error {
 
 func (s *keyStore) List(ctx context.Context, filter *key.ListFilter) ([]*key.Key, error) {
 	var models []keyModel
-	q := s.db.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.db.NewSelect(&models).OrderExpr("created_at DESC, id DESC")
 
 	if filter != nil {
 		if filter.TenantID != "" {

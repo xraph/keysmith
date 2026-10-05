@@ -192,8 +192,13 @@ func (s *keyStore) List(_ context.Context, filter *key.ListFilter) ([]*key.Key, 
 		cp := *k
 		result = append(result, &cp)
 	}
+	// Newest first with the ID breaking ties, as the SQL and mongo stores
+	// order them, so paging by offset never skips or repeats a key.
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].CreatedAt.After(result[j].CreatedAt)
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.After(result[j].CreatedAt)
+		}
+		return result[i].ID.String() > result[j].ID.String()
 	})
 	return applyPagination(result, filter.Offset, filter.Limit), nil
 }
