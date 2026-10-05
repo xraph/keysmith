@@ -120,9 +120,10 @@ type RotationItem struct {
 	// zero-grace rotation, not unset, so it goes out as 0, never null.
 	GraceSeconds int64  `json:"graceSeconds"`
 	GraceEnds    string `json:"graceEnds"`
-	// WindowOpen is true while the previous key still validates: the key
-	// exists in this tenant, the record has an old hint, and GraceEnds is
-	// ahead of now.
+	// WindowOpen is true while the previous key can still validate: the key
+	// exists in this tenant and is neither expired nor revoked, the record
+	// has an old hint, and GraceEnds is ahead of now. A suspended key's
+	// window stays open, since it resumes on reactivation.
 	WindowOpen bool   `json:"windowOpen"`
 	RotatedBy  string `json:"rotatedBy,omitempty"`
 	RotatedAt  string `json:"rotatedAt"` // the record's CreatedAt
@@ -133,13 +134,20 @@ type RotationItem struct {
 // that, so k is used as given.
 //
 // A window is open only while GraceEnds is ahead of now, the record has an
-// old hint, and k is not nil. A hintless record was written before the grace
-// fix, when RotateKey recorded a window but killed the old key at once, and
-// the engine's ValidateKey never honours it; keys.detail's previousKeys
-// draws the same line, so the two pages agree. ValidateKey also loads the
-// rotated key after finding the grace record, so once the key is gone the
-// old key stops validating too, and a key outside the tenant is never this
-// tenant's window to show.
+// old hint, k is not nil, and k is neither expired nor revoked. A hintless
+// record was written before the grace fix, when RotateKey recorded a window
+// but killed the old key at once, and the engine's ValidateKey never honours
+// it; keys.detail's previousKeys draws the same line, so the two pages
+// agree. ValidateKey also loads the rotated key after finding the grace
+// record, so once the key is gone the old key stops validating too, and a
+// key outside the tenant is never this tenant's window to show.
+//
+// After loading the key, ValidateKey refuses an expired or revoked one
+// whichever hash was presented, and no state leads out of either, so such a
+// window is closed for good even with grace left. effectiveState decides
+// both, the same way the key's own page does. A suspended key is refused
+// too, but only until it is reactivated, and its window then resumes, so it
+// stays open here.
 func projectRotationItem(r *rotation.Record, k *key.Key, now time.Time) RotationItem {
 	it := RotationItem{
 		ID:           r.ID.String(),
@@ -149,7 +157,7 @@ func projectRotationItem(r *rotation.Record, k *key.Key, now time.Time) Rotation
 		Reason:       string(r.Reason),
 		GraceSeconds: int64(r.GraceTTL / time.Second),
 		GraceEnds:    rfc3339(r.GraceEnds),
-		WindowOpen:   k != nil && r.OldHint != "" && r.GraceEnds.After(now),
+		WindowOpen:   k != nil && r.OldHint != "" && r.GraceEnds.After(now) && !keyIsFinished(k, now),
 		RotatedBy:    r.RotatedBy,
 		RotatedAt:    rfc3339(r.CreatedAt),
 	}
@@ -172,6 +180,13 @@ func effectiveState(k *key.Key, now time.Time) (state string, pending bool) {
 		return string(key.StateExpired), true
 	}
 	return string(k.State), false
+}
+
+// keyIsFinished reports whether k is expired or revoked as the page shows
+// it. ValidateKey refuses such a key for good.
+func keyIsFinished(k *key.Key, now time.Time) bool {
+	state, _ := effectiveState(k, now)
+	return state == string(key.StateExpired) || state == string(key.StateRevoked)
 }
 
 // projectKey builds the wire shape of k. scopes come from the scope store,

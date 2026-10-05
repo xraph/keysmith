@@ -340,6 +340,55 @@ func TestRotationsListWindowsAndGrace(t *testing.T) {
 	})
 }
 
+// ValidateKey refuses an expired or revoked key whichever hash the caller
+// presents, and nothing leads back out of either state, so a window on such
+// a key is closed for good even while its grace end is ahead. A suspended
+// key's window stays open: it resumes when the key is reactivated.
+func TestRotationsListClosesTheWindowOfAnExpiredOrRevokedKey(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, _ := setup(t, s)
+		now := time.Now()
+		base := now.Add(-time.Hour).Truncate(time.Minute)
+		live := ovKey(t, s, "t1", "live", key.StateActive, base, nil)
+		paused := ovKey(t, s, "t1", "paused", key.StateSuspended, base.Add(time.Minute), nil)
+		expired := ovKey(t, s, "t1", "expired", key.StateExpired, base.Add(2*time.Minute), ovAt(-time.Minute))
+		// Stored active, but its expiry has passed and nothing has marked it.
+		lapsed := ovKey(t, s, "t1", "lapsed", key.StateActive, base.Add(3*time.Minute), ovAt(-time.Minute))
+		revoked := ovKey(t, s, "t1", "revoked", key.StateRevoked, base.Add(4*time.Minute), nil)
+		// A stale full-row write raced the revoke: the state reads active
+		// again but RevokedAt is still set, and the engine treats that as
+		// revoked.
+		raced := ovKey(t, s, "t1", "raced", key.StateActive, base.Add(5*time.Minute), nil)
+		raced.RevokedAt = &base
+		require.NoError(t, s.Keys().Update(context.Background(), raced))
+
+		want := map[string]bool{
+			live.ID.String():    true,
+			paused.ID.String():  true,
+			expired.ID.String(): false,
+			lapsed.ID.String():  false,
+			revoked.ID.String(): false,
+			raced.ID.String():   false,
+		}
+		i := 0
+		for kid := range want {
+			parsed, err := id.ParseKeyID(kid)
+			require.NoError(t, err)
+			i++
+			// Every window is a minute old with an hour of grace left.
+			rotSeed(t, s, "t1", parsed, rotation.ReasonManual, now.Add(-time.Duration(i)*time.Minute), time.Hour)
+		}
+
+		out, err := rotList(deps, rotationsListRequest{Limit: maxListLimit})
+		require.NoError(t, err)
+		require.Len(t, out.Items, len(want))
+		for _, it := range out.Items {
+			require.NotNil(t, it.KeyName, it.KeyID)
+			assert.Equal(t, want[it.KeyID], it.WindowOpen, *it.KeyName)
+		}
+	})
+}
+
 func TestRotationsListFromARealRotation(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, eng := setup(t, s)

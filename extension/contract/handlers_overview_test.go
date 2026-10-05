@@ -118,8 +118,8 @@ func TestOverviewCountsKeysExpiringWithinSevenDays(t *testing.T) {
 
 // A window counts when rotations.list would show it open: the record is
 // this tenant's, it has an old hint, its grace ends ahead of now, and its
-// key exists in this tenant. A suspended key's window still counts, since
-// it resumes on reactivation.
+// key exists in this tenant and is neither expired nor revoked. A suspended
+// key's window still counts, since it resumes on reactivation.
 func TestOverviewCountsOpenGraceWindowsAsTheRotationsPageShowsThem(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, eng := setup(t, s)
@@ -144,6 +144,12 @@ func TestOverviewCountsOpenGraceWindowsAsTheRotationsPageShowsThem(t *testing.T)
 			OldKeyHash: "old-hash", NewKeyHash: "new-hash",
 			Reason: rotation.ReasonManual, GraceTTL: time.Hour, GraceEnds: at.Add(time.Hour), CreatedAt: at,
 		}))
+		// Grace still ahead, but ValidateKey refuses an expired or revoked
+		// key for good, so neither window counts.
+		expired := ovKey(t, s, "t1", "expired", key.StateExpired, now.Add(-time.Hour), ovAt(-time.Minute))
+		rotSeed(t, s, "t1", expired.ID, rotation.ReasonManual, now.Add(-7*time.Minute), time.Hour)
+		revoked := ovKey(t, s, "t1", "revoked", key.StateRevoked, now.Add(-2*time.Hour), nil)
+		rotSeed(t, s, "t1", revoked.ID, rotation.ReasonManual, now.Add(-8*time.Minute), time.Hour)
 
 		out, err := ovGet(deps)
 		require.NoError(t, err)
