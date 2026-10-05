@@ -34,6 +34,10 @@ func mapStoreError(err error) error {
 		errors.Is(err, keysmith.ErrQuotaExceeded):
 		return forge.NewHTTPError(http.StatusTooManyRequests, err.Error())
 	case errors.Is(err, keysmith.ErrPolicyInUse),
+		errors.Is(err, keysmith.ErrPolicyNameTaken),
+		errors.Is(err, keysmith.ErrScopeNameTaken),
+		errors.Is(err, keysmith.ErrScopeHasChildren),
+		errors.Is(err, keysmith.ErrScopeAllowedByPolicy),
 		errors.Is(err, keysmith.ErrInvalidStateTransition):
 		return forge.NewHTTPError(http.StatusConflict, err.Error())
 	case errors.Is(err, keysmith.ErrIPNotAllowed),

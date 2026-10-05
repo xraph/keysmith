@@ -21,7 +21,7 @@ func (a *API) createScope(ctx forge.Context, req *CreateScopeRequest) (*ScopeRes
 	}
 
 	if err := a.eng.CreateScope(ctx.Context(), sc); err != nil {
-		return nil, fmt.Errorf("create scope: %w", err)
+		return nil, mapStoreError(err)
 	}
 
 	resp := toScopeResponse(sc)

@@ -188,7 +188,7 @@ func (a *API) registerScopeRoutes(router forge.Router) {
 
 	_ = g.DELETE("/scopes/:scopeId", a.deleteScope,
 		forge.WithSummary("Delete scope"),
-		forge.WithDescription("Deletes a permission scope."),
+		forge.WithDescription("Deletes a permission scope. Fails while other scopes name it as their parent or a policy allows it."),
 		forge.WithOperationID("deleteScope"),
 		forge.WithRequestSchema(DeleteScopeRequest{}),
 		forge.WithNoContentResponse(),

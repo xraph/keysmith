@@ -32,7 +32,7 @@ func (a *API) createPolicy(ctx forge.Context, req *CreatePolicyRequest) (*Policy
 	}
 
 	if err := a.eng.CreatePolicy(ctx.Context(), pol); err != nil {
-		return nil, fmt.Errorf("create policy: %w", err)
+		return nil, mapStoreError(err)
 	}
 
 	resp := toPolicyResponse(pol)
