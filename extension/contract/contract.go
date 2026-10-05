@@ -93,6 +93,9 @@ func Register(
 		{"scopes.list", func() error {
 			return dispatcher.RegisterQuery(d, c, "scopes.list", 1, scopesListHandler(deps))
 		}},
+		{"rotations.list", func() error {
+			return dispatcher.RegisterQuery(d, c, "rotations.list", 1, rotationsListHandler(deps))
+		}},
 		{"keys.create", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps))
 		}},

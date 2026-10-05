@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/policy"
+	"github.com/xraph/keysmith/rotation"
 )
 
 // expiresSoonWindow is how far ahead an active key counts as expiring soon.
@@ -98,6 +99,60 @@ type PreviousKey struct {
 	Reason     string `json:"reason"`
 	RotatedAt  string `json:"rotatedAt"`
 	GraceEnds  string `json:"graceEnds"`
+}
+
+// RotationItem is one rotation as the Rotations page and the key page's
+// history show it. Masked forms are built on the client from prefix,
+// environment and the hints. Neither key's hash is ever carried.
+type RotationItem struct {
+	ID    string `json:"id"`
+	KeyID string `json:"keyId"`
+	// KeyName, Prefix and Environment are null together when the key no
+	// longer exists in this tenant.
+	KeyName     *string `json:"keyName"`
+	Prefix      *string `json:"prefix"`
+	Environment *string `json:"environment"`
+	// OldHint and NewHint are "" on records written before hints existed.
+	OldHint string `json:"oldHint"`
+	NewHint string `json:"newHint"`
+	Reason  string `json:"reason"`
+	// GraceSeconds is the window the rotation recorded. 0 is a real
+	// zero-grace rotation, not unset, so it goes out as 0, never null.
+	GraceSeconds int64  `json:"graceSeconds"`
+	GraceEnds    string `json:"graceEnds"`
+	// WindowOpen is true while the previous key still validates.
+	WindowOpen bool   `json:"windowOpen"`
+	RotatedBy  string `json:"rotatedBy,omitempty"`
+	RotatedAt  string `json:"rotatedAt"` // the record's CreatedAt
+}
+
+// projectRotationItem builds the wire shape of r. k is the rotated key, or
+// nil when it no longer exists in the caller's tenant; the caller decides
+// that, so k is used as given.
+//
+// A window is open only while GraceEnds is ahead of now AND the record has
+// an old hint. A hintless record was written before the grace fix, when
+// RotateKey recorded a window but killed the old key at once, and the
+// engine's ValidateKey never honours it. keys.detail's previousKeys draws
+// the same line, so the two pages agree.
+func projectRotationItem(r *rotation.Record, k *key.Key, now time.Time) RotationItem {
+	it := RotationItem{
+		ID:           r.ID.String(),
+		KeyID:        r.KeyID.String(),
+		OldHint:      r.OldHint,
+		NewHint:      r.NewHint,
+		Reason:       string(r.Reason),
+		GraceSeconds: int64(r.GraceTTL / time.Second),
+		GraceEnds:    rfc3339(r.GraceEnds),
+		WindowOpen:   r.OldHint != "" && r.GraceEnds.After(now),
+		RotatedBy:    r.RotatedBy,
+		RotatedAt:    rfc3339(r.CreatedAt),
+	}
+	if k != nil {
+		name, prefix, env := k.Name, k.Prefix, string(k.Environment)
+		it.KeyName, it.Prefix, it.Environment = &name, &prefix, &env
+	}
+	return it
 }
 
 // effectiveState is the state the page shows. A revoked_at timestamp wins

@@ -182,15 +182,27 @@ func TestNoQueryResponseCarriesASecret(t *testing.T) {
 		require.NoError(t, err)
 		polDetail, err := policiesDetailHandler(deps)(context.Background(), policyIDRequest{ID: pol.ID.String()}, principal())
 		require.NoError(t, err)
-		for _, v := range []any{list, detail, policies, polDetail} {
+		// A rotation, so rotations.list has a row whose old hash is the
+		// first key's hash.
+		rotated, err := eng.RotateKey(tctx("t1"), r.Key.ID, rotation.ReasonManual)
+		require.NoError(t, err)
+		rotations, err := rotationsListHandler(deps)(context.Background(), rotationsListRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, rotations.Items, 1)
+		for _, v := range []any{list, detail, policies, polDetail, rotations} {
 			b, err := json.Marshal(v)
 			require.NoError(t, err)
 			body := string(b)
-			for _, banned := range []string{"rawKey", "raw_key", "keyHash", "key_hash", r.Key.KeyHash} {
+			for _, banned := range []string{"rawKey", "raw_key", "keyHash", "key_hash", "KeyHash"} {
 				assert.NotContains(t, body, banned)
+			}
+			// Hashes are checked without printing them.
+			for i, hash := range []string{r.Key.KeyHash, rotated.Key.KeyHash} {
+				assert.False(t, strings.Contains(body, hash), "response of %d bytes carries key hash %d", len(body), i)
 			}
 			// Never print the raw key, even in a failure message.
 			assert.False(t, strings.Contains(body, r.RawKey), "response of %d bytes carries the raw key", len(body))
+			assert.False(t, strings.Contains(body, rotated.RawKey), "response of %d bytes carries the rotated raw key", len(body))
 		}
 	})
 }
