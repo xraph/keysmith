@@ -136,26 +136,33 @@ func usageSeriesHandler(deps Deps) func(context.Context, usageSeriesRequest, das
 		for _, s := range starts {
 			byStart[s.Unix()] = &sums{}
 		}
+		// Every row in [first, before) truncates to one of the starts. A
+		// start that is not one of them means the store bucketed in another
+		// zone or unit. The page still answers without it, and the operator
+		// hears about it once per request, not once per bucket.
+		var misaligned int
+		var firstMisaligned time.Time
 		for _, a := range aggs {
-			// Every row in [first, before) truncates to one of the starts.
-			// A start that is not one of them means the store bucketed in
-			// another zone or unit. The page still answers without it, and
-			// the operator hears about it.
 			b, ok := byStart[a.PeriodStart.Unix()]
 			if !ok {
-				if deps.Logger != nil {
-					deps.Logger.Warn("keysmith/contract: usage store answered a bucket outside the requested ones",
-						forge.F("intent", "usage.series"),
-						forge.F("period", in.Period),
-						forge.F("start", a.PeriodStart.UTC().Format(time.RFC3339)),
-					)
+				if misaligned == 0 {
+					firstMisaligned = a.PeriodStart
 				}
+				misaligned++
 				continue
 			}
 			b.requests += a.RequestCount
 			b.errs += a.ErrorCount
 			b.serverErrs += a.ServerErrorCount
 			b.latency += a.TotalLatency
+		}
+		if misaligned > 0 && deps.Logger != nil {
+			deps.Logger.Warn("keysmith/contract: usage store answered buckets outside the requested ones",
+				forge.F("intent", "usage.series"),
+				forge.F("period", in.Period),
+				forge.F("count", misaligned),
+				forge.F("first_start", firstMisaligned.UTC().Format(time.RFC3339)),
+			)
 		}
 		buckets := make([]UsageBucket, 0, len(starts))
 		for _, s := range starts {

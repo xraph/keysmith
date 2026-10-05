@@ -799,6 +799,7 @@ func TestUsageSeriesWarnsAboutAMisalignedBucketAndKeepsAnswering(t *testing.T) {
 	fake := usMisaligned{Store: base.Usages(), aggs: []*usage.Aggregation{
 		{TenantID: "t1", Period: "hourly", PeriodStart: usTime(t, "2026-03-10T10:00:00Z"), RequestCount: 2, TotalLatency: 8},
 		{TenantID: "t1", Period: "hourly", PeriodStart: usTime(t, "2026-03-10T10:30:00Z"), RequestCount: 5, ErrorCount: 5},
+		{TenantID: "t1", Period: "hourly", PeriodStart: usTime(t, "2026-03-10T11:30:00Z"), RequestCount: 1},
 	}}
 	deps, _ := setup(t, usageStoreWith{Store: base, usages: fake})
 	var lines []rotateLogLine
@@ -808,11 +809,12 @@ func TestUsageSeriesWarnsAboutAMisalignedBucketAndKeepsAnswering(t *testing.T) {
 	out, err := usSeries(deps, req)
 	require.NoError(t, err)
 	assert.Equal(t, []int64{2, 0}, usRequests(out.Buckets))
-	assert.EqualValues(t, 2, out.Buckets[0].Succeeded, "the stray bucket's errors land nowhere")
-	require.Len(t, lines, 1)
+	assert.EqualValues(t, 2, out.Buckets[0].Succeeded, "the stray buckets' rows land nowhere")
+	require.Len(t, lines, 1, "one warning per request, however many buckets are off")
 	assert.Equal(t, "usage.series", lines[0].fields["intent"])
 	assert.Equal(t, "hourly", lines[0].fields["period"])
-	assert.Equal(t, "2026-03-10T10:30:00Z", lines[0].fields["start"])
+	assert.Equal(t, "2", lines[0].fields["count"])
+	assert.Equal(t, "2026-03-10T10:30:00Z", lines[0].fields["first_start"])
 
 	// Without a logger it still answers.
 	deps.Logger = nil
