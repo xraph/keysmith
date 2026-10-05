@@ -510,6 +510,29 @@ func TestPoliciesUpdateChecksOnlyTheScopesItAdds(t *testing.T) {
 	})
 }
 
+// Another client can store a scope name with spaces around it. The edit
+// compares against the stored names after trimming them, so a policy whose
+// only scope is " gone " (and no scope "gone" exists) still takes an edit to
+// its description, and a genuinely new name is still looked up.
+func TestPoliciesUpdateKeepsAStoredScopeNameThatCarriesSpaces(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, _ := setup(t, s)
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		pol := &policy.Policy{
+			ID: id.NewPolicyID(), TenantID: "t1", AppID: "app", Name: "Padded",
+			AllowedScopes: []string{" gone "}, CreatedAt: now, UpdatedAt: now,
+		}
+		require.NoError(t, s.Policies().Create(context.Background(), pol))
+
+		out, err := pwUpdate(deps, pol.ID.String(), policyFields{Description: pwStr("still editable")})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"gone"}, out.Policy.AllowedScopes)
+
+		_, err = pwUpdate(deps, pol.ID.String(), policyFields{AllowedScopes: pwList("gone", "missing")})
+		assert.Equal(t, `scope "missing" does not exist in this tenant`, badRequestMessage(t, err))
+	})
+}
+
 func TestPoliciesUpdateIsTenantScoped(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, eng := setup(t, s)
