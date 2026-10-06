@@ -342,8 +342,9 @@ func TestRotationsListWindowsAndGrace(t *testing.T) {
 
 // ValidateKey refuses an expired or revoked key whichever hash the caller
 // presents, and nothing leads back out of either state, so a window on such
-// a key is closed for good even while its grace end is ahead. A suspended
-// key's window stays open: it resumes when the key is reactivated.
+// a key is closed for good even while its grace end is ahead. So is a
+// suspended key past its expiry. A suspended key within its expiry keeps its
+// window open: it resumes when the key is reactivated.
 func TestRotationsListClosesTheWindowOfAnExpiredOrRevokedKey(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, _ := setup(t, s)
@@ -361,6 +362,10 @@ func TestRotationsListClosesTheWindowOfAnExpiredOrRevokedKey(t *testing.T) {
 		raced := ovKey(t, s, "t1", "raced", key.StateActive, base.Add(5*time.Minute), nil)
 		raced.RevokedAt = &base
 		require.NoError(t, s.Keys().Update(context.Background(), raced))
+		// Suspended, and its expiry has passed. Reactivating it would only
+		// lead ValidateKey to refuse it on expiry, so its window can never
+		// resume.
+		stale := ovKey(t, s, "t1", "stale", key.StateSuspended, base.Add(6*time.Minute), ovAt(-time.Minute))
 
 		want := map[string]bool{
 			live.ID.String():    true,
@@ -369,6 +374,7 @@ func TestRotationsListClosesTheWindowOfAnExpiredOrRevokedKey(t *testing.T) {
 			lapsed.ID.String():  false,
 			revoked.ID.String(): false,
 			raced.ID.String():   false,
+			stale.ID.String():   false,
 		}
 		i := 0
 		for kid := range want {

@@ -181,6 +181,12 @@ func keysDetailHandler(deps Deps) func(context.Context, keysDetailRequest, dashc
 			// A policy from another tenant is never shown.
 		}
 
+		// A finished key's previous keys never validate again, whatever its
+		// grace records say, so it lists none. rotations.list and overview
+		// close the same windows by the same rule.
+		if keyIsFinished(k, now) {
+			return out, nil
+		}
 		windows, err := listOpenWindows(ctx, deps.Engine, k.ID, now)
 		if err != nil {
 			return keysDetailResponse{}, deps.mapError("keys.detail", err)

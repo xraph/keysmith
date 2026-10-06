@@ -121,9 +121,10 @@ type RotationItem struct {
 	GraceSeconds int64  `json:"graceSeconds"`
 	GraceEnds    string `json:"graceEnds"`
 	// WindowOpen is true while the previous key can still validate: the key
-	// exists in this tenant and is neither expired nor revoked, the record
-	// has an old hint, and GraceEnds is ahead of now. A suspended key's
-	// window stays open, since it resumes on reactivation.
+	// exists in this tenant, is neither expired nor revoked, and is not past
+	// its expiry; the record has an old hint; and GraceEnds is ahead of now.
+	// A suspended key's window stays open while its expiry is ahead, since
+	// it resumes on reactivation.
 	WindowOpen bool   `json:"windowOpen"`
 	RotatedBy  string `json:"rotatedBy,omitempty"`
 	RotatedAt  string `json:"rotatedAt"` // the record's CreatedAt
@@ -147,7 +148,9 @@ type RotationItem struct {
 // window is closed for good even with grace left. effectiveState decides
 // both, the same way the key's own page does. A suspended key is refused
 // too, but only until it is reactivated, and its window then resumes, so it
-// stays open here.
+// stays open here while its expiry is ahead. Once its expiry has passed,
+// reactivation leads only to a refusal on expiry, so that window is closed
+// too. keyIsFinished holds the rule.
 func projectRotationItem(r *rotation.Record, k *key.Key, now time.Time) RotationItem {
 	it := RotationItem{
 		ID:           r.ID.String(),
@@ -182,9 +185,16 @@ func effectiveState(k *key.Key, now time.Time) (state string, pending bool) {
 	return string(k.State), false
 }
 
-// keyIsFinished reports whether k is expired or revoked as the page shows
-// it. ValidateKey refuses such a key for good.
+// keyIsFinished reports whether no previous key of k can ever validate
+// again: k is expired or revoked as the page shows it, or its expiry has
+// passed whatever its stored state. ValidateKey refuses an expired or
+// revoked key for good, and a suspended key past its expiry is refused on
+// expiry as soon as it is reactivated, so its windows can never resume.
+// rotations.list, overview and keys.detail all close windows by this rule.
 func keyIsFinished(k *key.Key, now time.Time) bool {
+	if k.ExpiresAt != nil && !k.ExpiresAt.After(now) {
+		return true
+	}
 	state, _ := effectiveState(k, now)
 	return state == string(key.StateExpired) || state == string(key.StateRevoked)
 }

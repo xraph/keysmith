@@ -141,6 +141,45 @@ func TestKeyDetailShowsOpenWindowsOnly(t *testing.T) {
 	})
 }
 
+// A finished key lists no previous keys, even with an open grace record:
+// ValidateKey refuses an expired or revoked key whichever hash is
+// presented, and a suspended key past its expiry is refused on expiry once
+// reactivated. A suspended key within its expiry still lists them, since
+// its windows resume on reactivation. This is rotations.list's rule.
+func TestKeyDetailListsNoPreviousKeysForAFinishedKey(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, _ := setup(t, s)
+		now := time.Now()
+		base := now.Add(-time.Hour).Truncate(time.Minute)
+		expired := ovKey(t, s, "t1", "expired", key.StateExpired, base, ovAt(-time.Minute))
+		lapsed := ovKey(t, s, "t1", "lapsed", key.StateActive, base.Add(time.Minute), ovAt(-time.Minute))
+		raced := ovKey(t, s, "t1", "raced", key.StateActive, base.Add(2*time.Minute), nil)
+		raced.RevokedAt = &base
+		require.NoError(t, s.Keys().Update(context.Background(), raced))
+		stale := ovKey(t, s, "t1", "stale", key.StateSuspended, base.Add(3*time.Minute), ovAt(-time.Minute))
+		paused := ovKey(t, s, "t1", "paused", key.StateSuspended, base.Add(4*time.Minute), ovAt(time.Hour))
+
+		for i, k := range []*key.Key{expired, lapsed, raced, stale, paused} {
+			rotSeed(t, s, "t1", k.ID, rotation.ReasonManual, now.Add(-time.Duration(i+1)*time.Minute), time.Hour)
+		}
+
+		for _, k := range []*key.Key{expired, lapsed, raced, stale} {
+			out, err := keysDetailHandler(deps)(context.Background(), keysDetailRequest{ID: k.ID.String()}, principal())
+			require.NoError(t, err, k.Name)
+			assert.NotNil(t, out.PreviousKeys, k.Name)
+			assert.Empty(t, out.PreviousKeys, k.Name)
+			b, err := json.Marshal(out)
+			require.NoError(t, err)
+			assert.Contains(t, string(b), `"previousKeys":[]`, k.Name)
+		}
+
+		out, err := keysDetailHandler(deps)(context.Background(), keysDetailRequest{ID: paused.ID.String()}, principal())
+		require.NoError(t, err)
+		require.Len(t, out.PreviousKeys, 1)
+		assert.Equal(t, "a3f8", out.PreviousKeys[0].Hint)
+	})
+}
+
 func TestKeyDetailCarriesScopesPolicyAndPendingExpiry(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, eng := setup(t, s)
