@@ -33,11 +33,13 @@ type stPingStore struct {
 	pings       int
 	deadline    time.Time
 	hasDeadline bool
+	ctxErr      error
 }
 
 func (s *stPingStore) Ping(ctx context.Context) error {
 	s.pings++
 	s.deadline, s.hasDeadline = ctx.Deadline()
+	s.ctxErr = ctx.Err()
 	if s.err != nil {
 		return s.err
 	}
@@ -104,6 +106,24 @@ func TestSettingsGivesTheHealthCheckTwoSeconds(t *testing.T) {
 	// The deadline was set between start and end, two seconds ahead.
 	assert.False(t, spy.deadline.Before(start.Add(2*time.Second)), "deadline %v", spy.deadline.Sub(start))
 	assert.False(t, spy.deadline.After(end.Add(2*time.Second)), "deadline %v", spy.deadline.Sub(end))
+	assert.NoError(t, spy.ctxErr)
+
+	// The two seconds come off the request's own context, so a request that
+	// is already gone, or has less time left, is never given more.
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = settingsHandler(deps)(gone, settingsRequest{}, principal())
+	require.NoError(t, err)
+	require.Equal(t, 2, spy.pings)
+	assert.ErrorIs(t, spy.ctxErr, context.Canceled, "the ping runs under the request's context")
+
+	short, cancelShort := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelShort()
+	want, _ := short.Deadline()
+	_, err = settingsHandler(deps)(short, settingsRequest{}, principal())
+	require.NoError(t, err)
+	require.Equal(t, 3, spy.pings)
+	assert.Equal(t, want, spy.deadline, "the request's earlier deadline wins")
 }
 
 func TestSettingsListsPluginsSorted(t *testing.T) {

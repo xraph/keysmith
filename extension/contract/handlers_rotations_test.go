@@ -381,7 +381,7 @@ func TestRotationsListClosesTheWindowOfAnExpiredOrRevokedKey(t *testing.T) {
 			parsed, err := id.ParseKeyID(kid)
 			require.NoError(t, err)
 			i++
-			// Every window is a minute old with an hour of grace left.
+			// Each window is a few minutes old with most of an hour of grace left.
 			rotSeed(t, s, "t1", parsed, rotation.ReasonManual, now.Add(-time.Duration(i)*time.Minute), time.Hour)
 		}
 
