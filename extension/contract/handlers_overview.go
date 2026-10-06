@@ -29,9 +29,10 @@ type overviewResponse struct {
 	PolicyFields    int            `json:"policyFields"`
 }
 
-// overviewCounts are the tenant's keys by stored state. An active key past
-// its expiry that nothing has marked yet is still stored active, so it
-// counts as active here.
+// overviewCounts are the tenant's keys by effective state, as the badges
+// show it. An active key past its expiry that nothing has marked yet counts
+// as expired, and a key with RevokedAt set counts as revoked whatever its
+// stored state says. effectiveState holds the rule.
 type overviewCounts struct {
 	Active    int64 `json:"active"`
 	Suspended int64 `json:"suspended"`
@@ -58,9 +59,14 @@ func overviewHandler(deps Deps) func(context.Context, overviewRequest, dashcontr
 		if out.Counts, err = overviewKeyCounts(ctx, deps, tenant); err != nil {
 			return overviewResponse{}, err
 		}
-		if out.ExpiringWithin7Days, err = overviewExpiring(ctx, deps, tenant, now); err != nil {
+		soon, err := overviewSoon(ctx, deps, tenant, now)
+		if err != nil {
 			return overviewResponse{}, err
 		}
+		out.ExpiringWithin7Days = soon.expiring
+		out.Counts.Active -= soon.pendingExpired + soon.staleRevoked
+		out.Counts.Expired += soon.pendingExpired
+		out.Counts.Revoked += soon.staleRevoked
 		if out.OpenGraceWindows, err = overviewOpenWindows(ctx, deps, tenant, now); err != nil {
 			return overviewResponse{}, err
 		}
@@ -97,29 +103,51 @@ func overviewKeyCounts(ctx context.Context, deps Deps, tenant string) (overviewC
 	return c, nil
 }
 
-// overviewExpiring counts the tenant's keys that keys.list flags as
-// expiring soon: active, expiry ahead of now and within the window.
+// overviewSoonCounts are the tenant's stored-active keys that read as
+// something else, or soon will.
+type overviewSoonCounts struct {
+	expiring       int   // effective active, expiry ahead and within the window
+	pendingExpired int64 // effective expired: expiry passed, nothing has marked it
+	staleRevoked   int64 // RevokedAt set, though the stored state says active
+}
+
+// overviewSoon reads the tenant's stored-active keys that expire before now
+// plus the window, once, and sorts them by effective state. The expiring
+// count is the keys keys.list flags as expiring soon. The other two move
+// keys out of the stored active count into the bucket their badge shows.
 //
-// ListExpired has no tenant filter, so this reads every tenant's keys that
-// expire before now plus the window and keeps this tenant's. The list is not
-// paged, so the count is complete. It is the one post-filter in the
-// contract and is safe for that reason alone. A key already past its expiry
-// is expired, not expiring, even before anything marks it.
-func overviewExpiring(ctx context.Context, deps Deps, tenant string, now time.Time) (int, error) {
+// Every key whose expiry has passed expires before now plus the window, so
+// this read finds every pending expiry. A stored-active key with RevokedAt
+// set and no expiry inside the window is the one case it misses. Only a race
+// leaves a key that way (a stale write putting the state back to active
+// after a revoke), and that key still counts as active here.
+//
+// ListExpired has no tenant filter, so this reads every tenant's keys and
+// keeps this tenant's. The list is not paged, so the counts are complete.
+// It is the one post-filter in the contract and is safe for that reason
+// alone.
+func overviewSoon(ctx context.Context, deps Deps, tenant string, now time.Time) (overviewSoonCounts, error) {
 	keys, err := deps.Engine.Store().Keys().ListExpired(ctx, now.Add(expiresSoonWindow))
 	if err != nil {
-		return 0, deps.mapError("overview", err)
+		return overviewSoonCounts{}, deps.mapError("overview", err)
 	}
-	n := 0
+	var c overviewSoonCounts
 	for _, k := range keys {
-		// effectiveState reads a key past its expiry as expired, and a key
-		// with RevokedAt set as revoked whatever its stored state, so only
-		// keys whose expiry is still ahead are left.
-		if state, _ := effectiveState(k, now); k.TenantID == tenant && state == string(key.StateActive) {
-			n++
+		if k.TenantID != tenant {
+			continue
+		}
+		// effectiveState reads a key with RevokedAt set as revoked before
+		// it looks at the expiry, so a raced key is never counted twice.
+		switch state, _ := effectiveState(k, now); state {
+		case string(key.StateActive):
+			c.expiring++
+		case string(key.StateExpired):
+			c.pendingExpired++
+		case string(key.StateRevoked):
+			c.staleRevoked++
 		}
 	}
-	return n, nil
+	return c, nil
 }
 
 // overviewOpenWindows counts the tenant's rotations that rotations.list

@@ -57,26 +57,52 @@ func ovKeyIDs(ks []KeySummary) []string {
 	return out
 }
 
-// Counts are of the stored state, per tenant. An active key past its expiry
-// that nothing has marked yet is still stored active, so it counts there.
-func TestOverviewCountsKeysByStoredState(t *testing.T) {
+// Counts are by effective state, per tenant, as the badges show it. An
+// active key past its expiry that nothing has marked yet counts as expired,
+// and a key with RevokedAt set counts as revoked whatever its stored state.
+func TestOverviewCountsKeysByEffectiveState(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, _ := setup(t, s)
 		base := time.Now().Add(-time.Hour)
 		ovKey(t, s, "t1", "a1", key.StateActive, base, nil)
 		ovKey(t, s, "t1", "a2", key.StateActive, base.Add(time.Minute), ovAt(-time.Minute))
 		ovKey(t, s, "t1", "a3", key.StateActive, base.Add(2*time.Minute), nil)
-		ovKey(t, s, "t1", "s1", key.StateSuspended, base.Add(3*time.Minute), nil)
-		ovKey(t, s, "t1", "r1", key.StateRevoked, base.Add(4*time.Minute), nil)
-		ovKey(t, s, "t1", "r2", key.StateRevoked, base.Add(5*time.Minute), nil)
-		ovKey(t, s, "t1", "e1", key.StateExpired, base.Add(6*time.Minute), ovAt(-time.Hour))
+		ovKey(t, s, "t1", "a4", key.StateActive, base.Add(3*time.Minute), ovAt(3*24*time.Hour))
+		ovKey(t, s, "t1", "s1", key.StateSuspended, base.Add(4*time.Minute), nil)
+		ovKey(t, s, "t1", "r1", key.StateRevoked, base.Add(5*time.Minute), nil)
+		ovKey(t, s, "t1", "r2", key.StateRevoked, base.Add(6*time.Minute), nil)
+		ovKey(t, s, "t1", "e1", key.StateExpired, base.Add(7*time.Minute), ovAt(-time.Hour))
+		// Revoked, though a stale write put the stored state back to active.
+		raced := ovKey(t, s, "t1", "raced", key.StateRevoked, base.Add(8*time.Minute), ovAt(2*24*time.Hour))
+		require.NoError(t, s.Keys().UpdateState(context.Background(), raced.ID, key.StateActive))
+
+		// Another tenant's keys, the stale cases included, stay out.
 		for i, st := range []key.State{key.StateActive, key.StateSuspended, key.StateRevoked, key.StateExpired} {
 			ovKey(t, s, "t2", "theirs", st, base.Add(time.Duration(10+i)*time.Minute), nil)
 		}
+		ovKey(t, s, "t2", "theirs past expiry", key.StateActive, base.Add(20*time.Minute), ovAt(-time.Minute))
+		ovKey(t, s, "t2", "theirs expiring", key.StateActive, base.Add(21*time.Minute), ovAt(3*24*time.Hour))
+		theirRaced := ovKey(t, s, "t2", "theirs raced", key.StateRevoked, base.Add(22*time.Minute), ovAt(2*24*time.Hour))
+		require.NoError(t, s.Keys().UpdateState(context.Background(), theirRaced.ID, key.StateActive))
 
 		out, err := ovGet(deps)
 		require.NoError(t, err)
-		assert.Equal(t, overviewCounts{Active: 3, Suspended: 1, Revoked: 2, Expired: 1}, out.Counts)
+		assert.Equal(t, overviewCounts{Active: 3, Suspended: 1, Revoked: 3, Expired: 2}, out.Counts)
+		assert.Equal(t, 1, out.ExpiringWithin7Days, "only a4")
+
+		// The same states keys.list shows on the badges.
+		list, err := keysListHandler(deps)(context.Background(), keysListRequest{Limit: maxListLimit}, principal())
+		require.NoError(t, err)
+		shown := map[string]int64{}
+		for _, k := range list.Keys {
+			shown[k.EffectiveState]++
+		}
+		assert.Equal(t, overviewCounts{
+			Active:    shown[string(key.StateActive)],
+			Suspended: shown[string(key.StateSuspended)],
+			Revoked:   shown[string(key.StateRevoked)],
+			Expired:   shown[string(key.StateExpired)],
+		}, out.Counts)
 	})
 }
 
