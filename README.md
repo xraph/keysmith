@@ -165,6 +165,8 @@ app := forge.New(
 )
 ```
 
+Upgrading from the templ dashboard? Read [MIGRATION.md](MIGRATION.md) before you bump: the dashboard is a React plugin in forge-dashboard now, and it refuses every request until you give it a tenant.
+
 ## REST API
 
 When mounted via the Forge extension, Keysmith exposes these endpoints:

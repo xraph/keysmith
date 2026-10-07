@@ -125,6 +125,36 @@ The extension resolves its store in this order:
 2. **Grove database** -- if `WithGroveDatabase(name)` was called, the named or default `grove.DB` is resolved from DI.
 3. **In-memory fallback** -- if neither is configured, an in-memory store is used.
 
+## Dashboard
+
+Keysmith's dashboard is the React package `@forge-go/dashboard-plugin-keysmith`. It lives in the forge-dashboard repository under `packages/plugin-keysmith`, and you run it in forge's dashboard extension with the React shell. The only way it reaches keysmith is the contract contributor the extension registers in `Extension.RegisterContractContributor`. There is no Go-rendered dashboard any more, so if you're upgrading from the templ one, read [MIGRATION.md](https://github.com/xraph/keysmith/blob/main/MIGRATION.md) before you bump.
+
+You have to tell the dashboard which tenant it works in. Pass it when you build the extension:
+
+```go
+ext := extension.New(
+    extension.WithDashboardTenant("acme", "billing"),
+)
+```
+
+or set it in YAML:
+
+```yaml
+extensions:
+  keysmith:
+    dashboard:
+      tenant_id: acme
+      app_id: billing   # optional
+```
+
+Without a tenant, every dashboard request answers `PERMISSION_DENIED`, and the message names `extensions.keysmith.dashboard.tenant_id`. (A request with no signed-in user stops earlier, at `UNAUTHENTICATED`.) Keysmith won't fall back to an empty tenant, because an empty tenant in a store filter matches every tenant's rows.
+
+The contract handlers look for a `tenant_id` claim on the request's principal first and use this setting when there isn't one. No auth provider sets that claim today, so on every current deployment the setting is what scopes the dashboard, and every page shows that one tenant. The handlers don't take the tenant from `forge.Scope` the way the engine does, so a host that puts its own org on the request still gets the configured tenant.
+
+`app_id` can stay empty. It only labels the rows the dashboard creates, and keysmith never filters a read by app.
+
+When YAML and `WithDashboardTenant` both set a field, YAML wins. Each field is merged on its own, so a YAML `tenant_id` with no `app_id` still takes the app from the option.
+
 ## Extension options
 
 | Option | Type | Default | Description |
@@ -138,6 +168,7 @@ The extension resolves its store in this order:
 | `WithBasePath(path)` | `string` | `""` | URL prefix for keysmith routes |
 | `WithGroveDatabase(name)` | `string` | `""` | Named grove.DB to resolve from DI |
 | `WithRequireConfig(b)` | `bool` | `false` | Require config in YAML files |
+| `WithDashboardTenant(tenantID, appID)` | `string, string` | `"", ""` | Tenant the dashboard works in, and an optional app that labels rows it creates. A YAML value wins |
 
 ## File-based configuration (YAML)
 
@@ -156,6 +187,9 @@ extensions:
     disable_migrate: false
     base_path: "/keysmith"
     grove_database: ""
+    dashboard:
+      tenant_id: "acme"
+      app_id: ""
 ```
 
 ### Config fields
@@ -166,7 +200,9 @@ extensions:
 | `disable_migrate` | `bool` | `false` | Skip migrations on Start |
 | `base_path` | `string` | `""` | URL prefix for all routes |
 | `grove_database` | `string` | `""` | Named grove.DB from DI |
+| `dashboard.tenant_id` | `string` | `""` | Tenant the dashboard works in. Leave it empty and every dashboard request answers `PERMISSION_DENIED` |
+| `dashboard.app_id` | `string` | `""` | Labels rows the dashboard creates. Optional, and never filters a read |
 
 ### Merge behaviour
 
-File-based configuration is merged with programmatic options. Programmatic boolean flags (`DisableRoutes`, `DisableMigrate`) always win when set to `true`. For other fields, YAML values take precedence, then programmatic values, then defaults.
+File-based configuration is merged with programmatic options. Programmatic boolean flags (`DisableRoutes`, `DisableMigrate`) always win when set to `true`. For other fields, YAML values take precedence, then programmatic values, then defaults. That holds for `dashboard.tenant_id` and `dashboard.app_id` one field at a time.
