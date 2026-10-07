@@ -139,3 +139,15 @@ func (s *rotationStore) EndGrace(ctx context.Context, keyID id.KeyID, at time.Ti
 	n, _ := res.RowsAffected()
 	return n, nil
 }
+
+func (s *rotationStore) EndGraceByID(ctx context.Context, rotID id.RotationID, at time.Time) error {
+	_, err := s.sdb.NewUpdate((*rotationModel)(nil)).
+		Set("grace_ends = ?", dbTime(at)).
+		Where("id = ?", rotID.String()).
+		Where("grace_ends > ?", dbTime(at)).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("keysmith/sqlite: end grace of rotation: %w", err)
+	}
+	return nil
+}

@@ -2,6 +2,7 @@ package keysmith_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/rotation"
 	"github.com/xraph/keysmith/store"
+	"github.com/xraph/keysmith/store/memory"
 )
 
 // keysAfterGet wraps a key store so the first Get runs hook once it has read
@@ -68,12 +70,43 @@ func TestRotateThatLostARaceToARevokeIsRefused(t *testing.T) {
 		_, err = plain.ValidateKey(ctx, orig.RawKey)
 		require.ErrorIs(t, err, keysmith.ErrKeyInactive)
 
-		// rotation.Store cannot delete one record, so the rotation's record
-		// stays. Its new hash belongs to no key and its raw key was never
-		// handed out, and the key it names is revoked.
+		// The refused rotation's record stays as history, with its window
+		// ended. Its new hash belongs to no key and its raw key was never
+		// handed out.
 		recs, err := plain.ListRotations(ctx, &rotation.ListFilter{KeyID: &orig.Key.ID})
 		require.NoError(t, err)
-		assert.Len(t, recs, 1)
+		require.Len(t, recs, 1)
+		assert.False(t, recs[0].GraceEnds.After(time.Now()), "the refused rotation's window is ended")
+	})
+}
+
+// A compromise rotation with no grace that wins against a manual one must
+// still kill the old key. The loser recorded a 24h window on the same old
+// hash before its write was refused; left open, that window would keep the
+// compromised key validating for a day.
+func TestCompromiseRotationThatWinsARaceKeepsTheOldKeyDead(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		plain, ctx := newEngine(t, s)
+		orig := mustCreate(t, plain, ctx, nil)
+		var winner *key.CreateResult
+		eng := racedEngine(t, s, func(other *keysmith.Engine, ctx context.Context) error {
+			var err error
+			winner, err = other.RotateKey(ctx, orig.Key.ID, rotation.ReasonCompromise, keysmith.WithGrace(0))
+			return err
+		})
+
+		_, err := eng.RotateKey(ctx, orig.Key.ID, rotation.ReasonManual, keysmith.WithGrace(24*time.Hour))
+		require.ErrorIs(t, err, keysmith.ErrKeyConflict)
+
+		_, err = plain.ValidateKey(ctx, orig.RawKey)
+		require.ErrorIs(t, err, keysmith.ErrInvalidKey, "the compromised key stays dead")
+		vr, err := plain.ValidateKey(ctx, winner.RawKey)
+		require.NoError(t, err, "the winner's key validates")
+		assert.False(t, vr.ViaPreviousKey)
+
+		recs, err := plain.ListRotations(ctx, &rotation.ListFilter{KeyID: &orig.Key.ID})
+		require.NoError(t, err)
+		assert.Len(t, recs, 2, "both records stay as history")
 	})
 }
 
@@ -127,4 +160,40 @@ func TestRevokeThatLostARaceToARotationIsRefused(t *testing.T) {
 		_, err = plain.ValidateKey(ctx, orig.RawKey)
 		require.ErrorIs(t, err, keysmith.ErrInvalidKey, "the revoke closed the previous key's window")
 	})
+}
+
+// failingEndGrace wraps a rotation store so EndGraceByID fails.
+type failingEndGrace struct {
+	rotation.Store
+	err error
+}
+
+func (f failingEndGrace) EndGraceByID(context.Context, id.RotationID, time.Time) error { return f.err }
+
+type endGraceStore struct {
+	failingStore
+	rotations rotation.Store
+}
+
+func (s endGraceStore) Rotations() rotation.Store { return s.rotations }
+
+// When ending the refused rotation's window fails too, the caller hears
+// about both. Memory only: this is fault injection, not a backend property.
+func TestRotateReportsTheConflictAndAFailedCleanup(t *testing.T) {
+	s := memory.New()
+	plain, ctx := newEngine(t, s)
+	orig := mustCreate(t, plain, ctx, nil)
+	endErr := errors.New("end grace boom")
+	once := &sync.Once{}
+	eng, _ := newEngine(t, endGraceStore{
+		failingStore: failingStore{Store: s, keys: keysAfterGet{Store: s.Keys(), once: once, hook: func() {
+			_, err := plain.RotateKey(ctx, orig.Key.ID, rotation.ReasonCompromise, keysmith.WithGrace(0))
+			require.NoError(t, err)
+		}}},
+		rotations: failingEndGrace{Store: s.Rotations(), err: endErr},
+	})
+
+	_, err := eng.RotateKey(ctx, orig.Key.ID, rotation.ReasonManual, keysmith.WithGrace(time.Hour))
+	require.ErrorIs(t, err, keysmith.ErrKeyConflict)
+	require.ErrorIs(t, err, endErr)
 }

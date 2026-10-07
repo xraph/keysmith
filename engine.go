@@ -322,14 +322,15 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	// Record the rotation before touching the key. Until the key update
 	// lands, the old hash is still the key's current hash, so GetByHash
 	// finds it and callers on the old key never fall into a gap. If the key
-	// update then fails, the record stays: rotation.Store cannot delete one
-	// record. When nothing else wrote the key, the fallback cannot reach it,
-	// because it only runs for a hash that is no key's current hash and the
-	// old hash still is one. When the update lost a race (ErrKeyConflict),
-	// the record names a new hash no key ever had. After a revoke that is
-	// harmless, since the fallback refuses a revoked key, but after a
-	// competing rotation it can hold the old hash's window open longer than
-	// the winner chose.
+	// update then fails, the record stays as a history row. When nothing
+	// else wrote the key, the fallback cannot reach it: it only runs for a
+	// hash that is no key's current hash, and the old hash still is one.
+	// When the update lost a race (ErrKeyConflict), another write moved the
+	// key on, and if that write was a rotation the old hash is no longer
+	// current. This record would then hold the old key's window open as long
+	// as this call asked for, past whatever the winner chose, so the
+	// conflict path below ends this record's window. It ends only this one:
+	// EndGrace would close the winner's window too.
 	rec := &rotation.Record{
 		ID:         id.NewRotationID(),
 		KeyID:      k.ID,
@@ -354,7 +355,14 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	k.UpdatedAt = now
 
 	if err := e.store.Keys().UpdateIfVersion(ctx, k, k.Version); err != nil {
-		return nil, fmt.Errorf("update key: %w", err)
+		err = fmt.Errorf("update key: %w", err)
+		if errors.Is(err, ErrKeyConflict) {
+			// The caller may have gone, but the window must still close.
+			if endErr := e.store.Rotations().EndGraceByID(context.WithoutCancel(ctx), rec.ID, time.Now()); endErr != nil {
+				err = errors.Join(err, fmt.Errorf("end grace of the refused rotation: %w", endErr))
+			}
+		}
+		return nil, err
 	}
 
 	_ = e.hooks.FireKeyRotated(ctx, k, rec)

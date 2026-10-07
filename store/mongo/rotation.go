@@ -148,3 +148,14 @@ func (s *rotationStore) EndGrace(ctx context.Context, keyID id.KeyID, at time.Ti
 	}
 	return res.ModifiedCount(), nil
 }
+
+func (s *rotationStore) EndGraceByID(ctx context.Context, rotID id.RotationID, at time.Time) error {
+	_, err := s.mdb.NewUpdate((*rotationModel)(nil)).
+		Filter(bson.M{"_id": rotID.String(), "grace_ends": bson.M{"$gt": at}}).
+		Set("grace_ends", at).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("keysmith/mongo: end grace of rotation: %w", err)
+	}
+	return nil
+}

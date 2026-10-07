@@ -23,4 +23,11 @@ type Store interface {
 	// EndGrace sets GraceEnds to at on every record for the key whose
 	// GraceEnds is after at, and returns how many records changed.
 	EndGrace(ctx context.Context, keyID id.KeyID, at time.Time) (int64, error)
+
+	// EndGraceByID sets one record's GraceEnds to at when it is after at,
+	// the way EndGrace does for every record on a key. Other records on the
+	// same key keep their windows. A missing record, or one whose window
+	// already ended at or before at, changes nothing and returns nil, just
+	// as EndGrace counts it as zero.
+	EndGraceByID(ctx context.Context, rotID id.RotationID, at time.Time) error
 }

@@ -944,3 +944,13 @@ func (s *rotationStore) EndGrace(_ context.Context, keyID id.KeyID, at time.Time
 	}
 	return n, nil
 }
+
+func (s *rotationStore) EndGraceByID(_ context.Context, rotID id.RotationID, at time.Time) error {
+	st := s.store()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if r, ok := st.rotations[rotID.String()]; ok && r.GraceEnds.After(at) {
+		r.GraceEnds = at
+	}
+	return nil
+}

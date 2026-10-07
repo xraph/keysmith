@@ -102,7 +102,10 @@ func (s *keyStore) UpdateIfVersion(ctx context.Context, k *key.Key, version int6
 	if err != nil {
 		return fmt.Errorf("keysmith/postgres: update key: %w", err)
 	}
-	affected, _ := res.RowsAffected()
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("keysmith/postgres: update key rows: %w", err)
+	}
 	if affected == 0 {
 		return s.missingOrConflict(ctx, k.ID)
 	}

@@ -80,6 +80,43 @@ func TestEndGraceClosesEveryOpenWindow(t *testing.T) {
 	})
 }
 
+// EndGraceByID ends one record's window and leaves the others on the same
+// key alone. It never moves a window that already ended later, and a
+// missing record is not an error.
+func TestEndGraceByIDEndsOnlyThatRecord(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		k := newKey("t1")
+		require.NoError(t, s.Keys().Create(ctx, k))
+		// Whole milliseconds, because mongo keeps no finer.
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		target := rec(k.ID, "target", now.Add(24*time.Hour))
+		sibling := rec(k.ID, "sibling", now.Add(time.Hour))
+		ended := rec(k.ID, "ended", now.Add(-time.Hour))
+		for _, r := range []*rotation.Record{target, sibling, ended} {
+			require.NoError(t, s.Rotations().Create(ctx, r))
+		}
+
+		require.NoError(t, s.Rotations().EndGraceByID(ctx, target.ID, now))
+		require.NoError(t, s.Rotations().EndGraceByID(ctx, ended.ID, now))
+		require.NoError(t, s.Rotations().EndGraceByID(ctx, id.NewRotationID(), now), "a missing record is not an error")
+
+		ends := func(r *rotation.Record) time.Time {
+			got, err := s.Rotations().Get(ctx, r.ID)
+			require.NoError(t, err)
+			return got.GraceEnds
+		}
+		assert.WithinDuration(t, now, ends(target), time.Millisecond, "the target's window ends at at")
+		assert.WithinDuration(t, sibling.GraceEnds, ends(sibling), time.Millisecond, "a sibling on the same key keeps its window")
+		assert.WithinDuration(t, ended.GraceEnds, ends(ended), time.Millisecond, "an ended window is not pushed later")
+
+		_, err := s.Rotations().GetInGraceByOldHash(ctx, "target", now.Add(time.Second))
+		require.ErrorIs(t, err, store.ErrRotationNotFound)
+		_, err = s.Rotations().GetInGraceByOldHash(ctx, "sibling", now.Add(time.Second))
+		require.NoError(t, err)
+	})
+}
+
 // Paging a tenant's rotations by offset returns every row exactly once, even
 // when they all share one created_at, so the order has to be total. The
 // Rotations page pages these.
