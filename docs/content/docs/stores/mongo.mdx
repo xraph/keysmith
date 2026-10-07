@@ -29,7 +29,7 @@ eng, err := keysmith.NewEngine(keysmith.WithStore(s))
 
 ## Migrations
 
-The store creates collections with JSON Schema validation (auto-generated from Grove model structs) and applies indexes on all Keysmith collections. Run them on startup:
+`Store.Migrate` builds Keysmith's indexes, and that's all it does. A collection that doesn't exist yet gets created along the way, without schema validation, and none of the versioned migrations run (see Grove migrations below). Call it on startup:
 
 ```go
 if err := s.Migrate(ctx); err != nil {
@@ -37,7 +37,7 @@ if err := s.Migrate(ctx); err != nil {
 }
 ```
 
-This creates indexes across six collections:
+It builds indexes on six collections:
 
 | Collection | Description |
 | ---------- | ----------- |
@@ -48,15 +48,15 @@ This creates indexes across six collections:
 | `keysmith_usage` | Per-request usage records |
 | `keysmith_rotations` | Rotation history records |
 
-Migrations are idempotent and safe to run on every startup.
+Building an index that already exists is a no-op, so you can run it on every startup. That includes the stable-sort indexes on `keysmith_usage` and `keysmith_rotations`, `{tenant_id, created_at, _id}` and `{key_id, created_at, _id}`, which the Usage and Rotations lists page by.
 
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
 | Driver | grove ORM + mongodriver |
-| Migrations | Grove migrations with JSON Schema validation + indexes |
-| Transactions | MongoDB sessions (replica-set required for multi-doc txns) |
+| Migrations | `Store.Migrate` builds indexes; `Migrations` (a grove group) creates collections and runs the versioned changes |
+| Transactions | None: the store runs no multi-document transactions |
 | Concurrency | MongoDB native concurrency model |
 | Subsystems | keys, policies, scopes, usages, rotations |
 
@@ -74,9 +74,17 @@ if err := s.Ping(ctx); err != nil {
 eng, err := keysmith.NewEngine(keysmith.WithStore(s))
 ```
 
-## Grove Migrations
+## Grove migrations
 
-The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
+Collection creation and every versioned change live in the exported `Migrations` group, and they only run when you hand that group to grove's migration orchestrator. `Store.Migrate` never runs them. The group:
+
+- creates each collection with JSON Schema validation generated from the grove model structs, plus its indexes
+- adds the `old_key_hash` index on rotations (`20260930000001`)
+- drops `keysmith_usage_agg`, which nothing ever wrote to (`20260930000002`)
+- closes the grace windows of rotations recorded before the grace fix (`20260930000003`)
+- adds the stable-sort indexes on usage and rotations (`20261005000001`)
+
+If you only call `Store.Migrate` on a database that predates these, an old empty `keysmith_usage_agg` collection stays. It's harmless. The engine also refuses the old grace windows whether or not the migration ran.
 
 ```go
 import mongostore "github.com/xraph/keysmith/store/mongo"
@@ -92,5 +100,5 @@ import mongostore "github.com/xraph/keysmith/store/mongo"
 | Document-oriented workloads | Yes |
 | Horizontally-scaled environments | Yes |
 | Teams already running MongoDB | Yes |
-| Single-node development | Possible -- SQLite may be simpler |
-| Maximum SQL compatibility | No -- use PostgreSQL |
+| Single-node development | Possible, though SQLite may be simpler |
+| Maximum SQL compatibility | No, use PostgreSQL |
