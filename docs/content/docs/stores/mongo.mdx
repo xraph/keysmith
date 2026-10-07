@@ -37,7 +37,7 @@ if err := s.Migrate(ctx); err != nil {
 }
 ```
 
-This creates indexes across seven collections:
+This creates indexes across six collections:
 
 | Collection | Description |
 | ---------- | ----------- |
@@ -46,7 +46,6 @@ This creates indexes across seven collections:
 | `keysmith_scopes` | Scope definitions |
 | `keysmith_key_scopes` | Key-scope junction table |
 | `keysmith_usage` | Per-request usage records |
-| `keysmith_usage_agg` | Aggregated usage (daily/monthly) |
 | `keysmith_rotations` | Rotation history records |
 
 Migrations are idempotent and safe to run on every startup.

@@ -50,7 +50,7 @@ if err := pgStore.Migrate(ctx); err != nil {
 }
 ```
 
-This creates seven tables:
+This creates six tables:
 
 | Table | Description |
 | ----- | ----------- |
@@ -59,7 +59,6 @@ This creates seven tables:
 | `keysmith_scopes` | Scope definitions |
 | `keysmith_key_scopes` | Key-scope junction table |
 | `keysmith_usage` | Per-request usage records |
-| `keysmith_usage_agg` | Aggregated usage (daily/monthly) |
 | `keysmith_rotations` | Rotation history records |
 
 Migrations are idempotent and safe to run on every startup.
