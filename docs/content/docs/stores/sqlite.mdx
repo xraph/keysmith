@@ -35,7 +35,7 @@ For tests, point it at a file under `t.TempDir()`. Don't use `":memory:"`: every
 
 ## Connection settings
 
-Always open the database with `sqlite.DSN(path)`. It adds three settings to the DSN, and modernc's sqlite driver applies them to every connection the pool opens:
+Always open the database with `sqlite.DSN(path)`. It adds three settings to the DSN, and modernc's sqlite driver applies them to every connection the pool opens. If your path already sets one of them, your value wins and `DSN` adds only the missing ones:
 
 | Setting | Why |
 | ------- | --- |
@@ -43,7 +43,7 @@ Always open the database with `sqlite.DSN(path)`. It adds three settings to the 
 | `_pragma=foreign_keys(1)` | `ON DELETE CASCADE` runs on every connection. Deleting a key takes its scope links, usage and rotation rows with it, and deleting a scope takes its links. |
 | `_txlock=immediate` | Transactions take the write lock at `BEGIN`. SQLite doesn't wait when a transaction that has already read tries to write, and `AssignToKey` reads first. Read-only transactions still begin deferred. |
 
-grove's driver turns foreign keys on for one connection only and sets no busy timeout, and `sqlite.New` takes a `*grove.DB` it didn't open, so the store can't fix this after the fact. If you open the database some other way, from a grove extension's config for example, put the three parameters on that DSN yourself:
+grove's driver turns foreign keys on for one connection only and sets no busy timeout, and `sqlite.New` takes a `*grove.DB` it didn't open, so the store can't fix this after the fact. If you open the database some other way, from a grove extension's config for example, put the three parameters on that DSN yourself. The Forge extension logs a warning at startup when the busy timeout is missing:
 
 ```
 keysmith.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate

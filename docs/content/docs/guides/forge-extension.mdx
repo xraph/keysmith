@@ -117,6 +117,8 @@ ext := extension.New(
 
 This resolves the grove.DB named `"keysmith"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
 
+If the grove database is sqlite, add `_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate` to its DSN in your grove config, for example `keysmith.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate`. Without them a write can fail with `SQLITE_BUSY` and `ON DELETE CASCADE` gets skipped on most connections, and keysmith logs a warning at startup when the busy timeout is missing. [Connection settings](/docs/stores/sqlite#connection-settings) explains each one.
+
 ### Store resolution order
 
 The extension resolves its store in this order:
