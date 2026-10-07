@@ -161,6 +161,8 @@ When none of them answers, the request gets `PERMISSION_DENIED`, and the message
 
 So on a deployment whose sessions carry orgs, a user with an active org sees that org's rows even when `tenant_id` is set, and the configured tenant only shows for sessions without one.
 
+The dashboard takes the Scope's org as the tenant boundary for reads as well as writes, so your host must only set a `forge.Scope` from the authenticated session (as authsome does), never from anything the client sends.
+
 `app_id` can stay empty. It only labels the rows the dashboard creates, and keysmith never filters a read by app.
 
 When YAML and `WithDashboardTenant` both set a field, YAML wins. Each field is merged on its own, so a YAML `tenant_id` with no `app_id` still takes the app from the option.
