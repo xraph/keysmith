@@ -233,7 +233,7 @@ The engine can do these and the dashboard doesn't offer them:
 
 ## Breaking changes for anyone upgrading keysmith
 
-These landed on keysmith main between 55b057f and 3928145. If you embed keysmith, read them before you bump.
+These landed on keysmith main after 55b057f, up to and including 05ef9ca, which deleted the templ dashboard. If you embed keysmith, read them before you bump.
 
 ### Stores and migrations
 
@@ -265,7 +265,7 @@ These landed on keysmith main between 55b057f and 3928145. If you embed keysmith
 - `rotation.Store` gained `GetInGraceByOldHash` and `EndGrace` (f0d6886). A custom store won't compile until it implements both.
 - `usage.Aggregation.P50Latency` and `P99Latency` are `*int64` now, are never set, and drop out of the JSON (44850c1). The four backends can't compute the same percentile. `ServerErrorCount` is new.
 - `Engine.CleanupGraceExpired` is removed (7300130). It never acted, and with its filter corrected it would have revoked live keys.
-- The `dashboard` package is deleted, and the extension no longer has `DashboardContributor()` (c08cf0f).
+- The `dashboard` package is gone, and the extension no longer has `DashboardContributor()`. c08cf0f stopped wiring the package and removed that method, and 05ef9ca deleted the package itself.
 - Additions that compile unchanged at call sites: `RotateKey(ctx, id, reason, opts ...RotateOption)` with `WithGrace` and `WithRotatedBy` (an interface of your own that names the old three-argument signature needs the variadic); `Engine.EndGrace`; `Engine.RateLimiterConfigured`; `ValidationResult.ViaPreviousKey` and `GraceEnds`; `rotation.Record.OldHint` and `NewHint`. `key.StateRotated` stays defined, and the engine never assigns it.
 
 ### REST API
@@ -274,6 +274,10 @@ These landed on keysmith main between 55b057f and 3928145. If you embed keysmith
 - 409 for revoking a key twice, including a repeated `DELETE /keys/:id` that used to succeed, and for suspending a key that isn't active, which used to succeed even on a revoked key (74becf8). Duplicate policy or scope names and refused scope deletes answer 409 too (af19505).
 - 400 for `ErrKeyLifetimeExceeded` and for an unknown usage period.
 - The `/usage` endpoints return data now. They read the table nothing wrote before 44850c1.
+
+### Which backends the tests cover
+
+Plain `go test ./...` runs the store tests against memory and sqlite only. To cover postgres and mongo as well, run `make test-backends`. It needs Docker, starts throwaway `keysmith-test-pg` and `keysmith-test-mongo` containers on odd ports, runs the whole suite against all four backends and removes the containers when it's done. If you'd rather use servers you already have, set `KEYSMITH_TEST_PG_DSN` or `KEYSMITH_TEST_MONGO_URI` (or both) before `go test ./...`, and each one adds its backend. Expect the sqlite `SQLITE_BUSY` flake listed under open findings on any of these runs.
 
 ## Open findings for the maintainer
 
@@ -286,7 +290,7 @@ Reported during the migration and not fixed. One line each, with where it lives.
 - If the key update fails after its rotation record is written, the orphan record can shadow a later zero-grace rotation of the same old hash. The latest-created record for an old hash should decide (`engine.go` `RotateKey`, `GetInGraceByOldHash` in each rotation store).
 - `ValidateKey` treats a `GetByHash` store outage as a miss and answers `ErrInvalidKey` (`engine.go`, `ValidateKey`).
 - `FireKeyValidationFailed` hands the presented raw key to every plugin, including for a key that was found but is inactive (`engine.go` `ValidateKey`, `plugin/manager.go`).
-- On sqlite, the background `UpdateLastUsed` that `ValidateKey` starts can hit `SQLITE_BUSY` against the next write, and a test flakes about 3 runs in 40 (`engine.go` `ValidateKey`, `store/sqlite`).
+- On sqlite, the background `UpdateLastUsed` that `ValidateKey` starts can hit `SQLITE_BUSY` against the next write. Under load it fails roughly one run in three: a close-out run of `go test -count=15 ./...` failed 5 of 15, and focused runs of the affected tests failed 4 of 40 and 9 of 40. Until it's fixed, `go test ./...` and CI fail intermittently (`engine.go` `ValidateKey`, `store/sqlite`).
 - On sqlite, `PRAGMA foreign_keys=ON` runs on one pooled connection only, so `ON DELETE CASCADE` is skipped at random and orphan `keysmith_key_scopes` rows stay (grove's sqlite driver sets it at open, and `store/sqlite` never caps the pool).
 - The memory store's `ListByKey` matches scope names across tenants, and its `AssignToKey` checks neither existence nor tenant (`store/memory`, scope store).
 - `DeletePolicy` and `DeleteScope` check and then delete without a transaction, so a key or child scope created in between dangles (`engine.go`).

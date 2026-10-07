@@ -36,14 +36,15 @@ func requireUser(p dashcontract.Principal) (string, error) {
 //
 // READ THIS BEFORE CHANGING IT. It is the most dangerous function here.
 //
-// Do not read the tenant from the request context. A scope helper ported
-// from keysmith's templ dashboard would do that, and what it finds is not
-// ours to trust: keysmith itself puts nothing there on the contract path, so
-// a bare host leaves it empty, while a host such as authsome's dashboard
-// bridge sets a forge Scope for the session's own org and app. Neither is
-// the tenant this function resolves. Once a handler has the tenant from
-// here, it hands the engine engineCtx, which overrides whatever the request
-// carried.
+// Do not read the tenant from the request context. The Go-rendered
+// dashboard this package replaced handed the engine the request context
+// as it came, and carrying that habit over would be wrong, because what
+// the context holds is not ours to trust: keysmith itself puts nothing
+// there on the contract path, so a bare host leaves it empty, while a host
+// such as authsome's dashboard bridge sets a forge Scope for the session's
+// own org and app. Neither is the tenant this function resolves. Once a
+// handler has the tenant from here, it hands the engine engineCtx, which
+// overrides whatever the request carried.
 //
 // The empty string is not a harmless zero. An empty TenantID in a store
 // filter matches EVERY tenant's rows rather than none, so a handler that
