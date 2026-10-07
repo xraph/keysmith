@@ -81,15 +81,24 @@ The `key.Store.GetByHash` method is the hot path for validation. Ensure it is op
 
 ```go
 type Store interface {
-    Create(ctx context.Context, k *Key) error
-    GetByID(ctx context.Context, id id.KeyID) (*Key, error)
+    Create(ctx context.Context, key *Key) error
+    Get(ctx context.Context, keyID id.KeyID) (*Key, error)
     GetByHash(ctx context.Context, hash string) (*Key, error)
+    GetByPrefix(ctx context.Context, prefix, hint string) (*Key, error)
+    Update(ctx context.Context, key *Key) error
+    UpdateIfVersion(ctx context.Context, key *Key, version int64) error
+    UpdateState(ctx context.Context, keyID id.KeyID, state State) error
+    UpdateLastUsed(ctx context.Context, keyID id.KeyID, at time.Time) error
+    Delete(ctx context.Context, keyID id.KeyID) error
     List(ctx context.Context, filter *ListFilter) ([]*Key, error)
-    UpdateState(ctx context.Context, id id.KeyID, state State) error
-    UpdateLastUsed(ctx context.Context, id id.KeyID, t time.Time) error
-    Delete(ctx context.Context, id id.KeyID) error
+    Count(ctx context.Context, filter *ListFilter) (int64, error)
+    ListExpired(ctx context.Context, before time.Time) ([]*Key, error)
+    ListByPolicy(ctx context.Context, policyID id.PolicyID) ([]*Key, error)
+    DeleteByTenant(ctx context.Context, tenantID string) error
 }
 ```
+
+`UpdateIfVersion` is the one to get right. It must compare and write in one step (a `WHERE version = ?` on the update, or the equivalent filter), store `version+1`, and set it on the key. A key at another version returns `store.ErrKeyConflict`, a missing one `store.ErrKeyNotFound`. `Update` and `UpdateState` add one to the stored version too; `UpdateLastUsed` must not.
 
 ## Testing your store
 

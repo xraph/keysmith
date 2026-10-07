@@ -111,12 +111,23 @@ The `key.Store` interface defines the storage contract:
 
 ```go
 type Store interface {
-    Create(ctx context.Context, k *Key) error
-    GetByID(ctx context.Context, id id.KeyID) (*Key, error)
+    Create(ctx context.Context, key *Key) error
+    Get(ctx context.Context, keyID id.KeyID) (*Key, error)
     GetByHash(ctx context.Context, hash string) (*Key, error)
+    GetByPrefix(ctx context.Context, prefix, hint string) (*Key, error)
+    Update(ctx context.Context, key *Key) error
+    UpdateIfVersion(ctx context.Context, key *Key, version int64) error
+    UpdateState(ctx context.Context, keyID id.KeyID, state State) error
+    UpdateLastUsed(ctx context.Context, keyID id.KeyID, at time.Time) error
+    Delete(ctx context.Context, keyID id.KeyID) error
     List(ctx context.Context, filter *ListFilter) ([]*Key, error)
-    UpdateState(ctx context.Context, id id.KeyID, state State) error
-    UpdateLastUsed(ctx context.Context, id id.KeyID, t time.Time) error
-    Delete(ctx context.Context, id id.KeyID) error
+    Count(ctx context.Context, filter *ListFilter) (int64, error)
+    ListExpired(ctx context.Context, before time.Time) ([]*Key, error)
+    ListByPolicy(ctx context.Context, policyID id.PolicyID) ([]*Key, error)
+    DeleteByTenant(ctx context.Context, tenantID string) error
 }
 ```
+
+Every key carries a `Version` that counts writes to its row. It starts at 0. `Update` and `UpdateState` add one, and `UpdateLastUsed` doesn't, because it runs on every validation and would make every checked write on a busy key a conflict. `UpdateIfVersion` writes the row only when the stored version still matches the one you pass, then stores `version+1` and sets it on your key. If the key is there at another version you get `store.ErrKeyConflict` and nothing changes; a missing key is `store.ErrKeyNotFound`.
+
+The engine's rotate, revoke, suspend and reactivate all write through `UpdateIfVersion` with the version they read, so a rotation racing a revoke can't put the old row back. `Update` stays last-writer-wins on purpose. Code that writes keys straight into the store and never reads a version keeps working.
