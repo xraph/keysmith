@@ -62,7 +62,7 @@ Migrations are idempotent and safe to run on every startup.
 |--------|--------|
 | Driver | grove ORM + sqlitedriver |
 | Migrations | grove orchestrator with programmatic migrations |
-| Transactions | SQLite-level transactions |
+| Transactions | `AssignToKey`, `RemoveFromKey` and `RecordBatch` each run in one SQLite transaction. Nothing else does. |
 | Concurrency | Multiple readers, single writer (WAL mode) |
 | Subsystems | keys, policies, scopes, usages, rotations |
 
@@ -89,4 +89,4 @@ eng, err := keysmith.NewEngine(keysmith.WithStore(s))
 | Local development | Yes |
 | CI pipelines | Yes |
 | Single-node deployments | Yes |
-| Multi-node production | No -- use PostgreSQL or MongoDB |
+| Multi-node production | No, use PostgreSQL or MongoDB |

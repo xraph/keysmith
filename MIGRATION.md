@@ -47,7 +47,7 @@ Three things changed on every page, so the tables don't repeat them:
 | Count badge in the header | Migrated | `pages/keys.tsx`, `keys.list` | The table caption, from the server's total. |
 | Filter: environment (All, Live, Test, Staging) | Migrated | `pages/keys.tsx`, `keys.list` `environment` | |
 | Filter: state (All, Active, Revoked, Suspended, Expired) | Migrated | `pages/keys.tsx`, `keys.list` `state` | |
-| Search box "Search keys by name" | Dropped | | It sent `name`, and nothing read it: `renderKeys` ignored the parameter, so the box never filtered anything. `keys.list` has no name filter. |
+| Search box "Search keys by name" | Dropped | | It sent `name`, and nothing read it: `renderKeys` ignored the parameter, so the box never filtered anything. `keys.list` has no name filter. You narrow the list by environment, state or policy instead (`keys.list` `policyId`). |
 | Column: Name | Migrated | `pages/keys.tsx` | Links to the key. |
 | Column: Hint (`****a3f8`) | Migrated | `pages/keys.tsx` | Key column, `prefix_env_…hint`, mono. |
 | Column: Environment (badge) | Replaced | `pages/keys.tsx` | Plain text, as the spec rules. |
@@ -70,7 +70,7 @@ Three things changed on every page, so the tables don't repeat them:
 | Action: Suspend | Migrated | `components/key-actions.tsx`, `keys.suspend` | |
 | Action: Revoke (active keys only, fixed reason "Revoked via dashboard") | Migrated | `components/key-actions.tsx`, `keys.revoke` | Asks for a reason and is offered on any key that isn't revoked. The reason goes to the hooks; keysmith doesn't store it, so no page shows it later. |
 | Action: Reactivate (with a confirm) | Migrated | `components/key-actions.tsx`, `keys.reactivate` | No confirm: putting a key back is what you suspended it for. |
-| Stat: Usage (all-time request count) | Replaced | Usage section, `usage.series` | Requests over the last 7 UTC days, with a compact chart. |
+| Stat: Usage (all-time request count) | Dropped | | No page keeps an all-time count now. The Usage section shows the key's last 7 UTC days with a compact chart, and Open usage covers any range up to 12 months. |
 | Stat: Age | Replaced | Details "Created" | |
 | Stat: Rotations (count) | Replaced | Rotation history section | Lists the 10 newest and says when there are more. |
 | Stat: Last Used | Migrated | Details "Last used" | |
@@ -79,10 +79,10 @@ Three things changed on every page, so the tables don't repeat them:
 | Policy card: rate limit, burst, daily and monthly quota, rotation period | Replaced | `pages/policy-detail.tsx` | The key page names what Keysmith enforces. The rest sits on the policy page under the group that says who enforces it. |
 | Assigned Scopes card, with count badge | Replaced | `components/scopes-editor.tsx`, `keys.scopes.assign`, `keys.scopes.remove` | You can add and remove scopes here now. |
 | Empty state "No scopes assigned." | Migrated | Scopes section | |
-| Recent Usage table (20 rows: endpoint, method, status, latency, time) | Replaced | `pages/usage.tsx`, `usage.records` | The key page shows the chart. The rows are on Usage with the key picked in its Key filter. |
-| Recent Usage: View All (to `/usage/detail?key_id=`) | Replaced | "Open usage" | Lands on Usage unfiltered; see Not surfaced. |
+| Recent Usage table (20 rows: endpoint, method, status, latency, time) | Replaced | `pages/usage.tsx`, `usage.records` | The key page shows the chart. Open usage shows the rows on Usage with this key already chosen. |
+| Recent Usage: View All (to `/usage/detail?key_id=`) | Migrated | "Open usage", `/@keysmith/usage?keyId=` | Opens Usage with the key chosen in its Key filter. |
 | Empty state "No usage recorded yet." | Migrated | Usage section | "Usage appears once your application calls RecordUsage." |
-| Rotation History table: Reason, Grace Period, Grace Ends, Rotated At | Migrated | Rotation history section, `rotations.list` `keyId` | Each row shows the old and new key and whether its window is open. Grace Period is the Grace column on Rotations. |
+| Rotation History table: Reason, Grace Period, Grace Ends, Rotated At | Migrated | Rotation history section, `rotations.list` `keyId` | Each row shows the old and new key and whether its window is open. Grace Period is the Grace column on Rotations. View all opens Rotations narrowed to this key (`?keyId=`). |
 | Rotation History count badge | Replaced | | "Showing the 10 newest." when there are more. |
 | Empty state "No rotations recorded." | Migrated | | "This key has not been rotated." |
 | Plugin sections slot (`KeyDetailContributor`) | Dropped | | Nothing in forgery implements it (spec). |
@@ -147,9 +147,9 @@ Three things changed on every page, so the tables don't repeat them:
 
 | Templ element | Status | Where it lives now | Note |
 |---|---|---|---|
-| Stat: Total Requests (all time) | Replaced | `pages/usage.tsx`, `usage.records` | The records table's caption counts the requests in the chosen range, up to 12 months. |
-| Stat: Error Rate | Replaced | `usage.series` | The chart and its table split each bucket into succeeded, 4xx and 5xx. No single rate is computed for the range. |
-| Stat: Avg Latency | Replaced | `usage.series` | Average latency per bucket in the table view. No single figure for the range. |
+| Stat: Total Requests (all time) | Dropped | | Nothing counts all time. The range summary above the chart counts the requests in the chosen range, up to 12 months. |
+| Stat: Error Rate | Replaced | `pages/usage.tsx` range summary, `usage.series` | 4xx plus 5xx over requests for the chosen range, next to the 5xx count. The chart and its table split each bucket the same way. |
+| Stat: Avg Latency | Replaced | `pages/usage.tsx` range summary, `usage.series` | Average latency over the range, weighted by requests. The table view has it per bucket. |
 | Usage Aggregations table: Period, Requests, Errors, Avg Latency, 5xx Errors | Migrated | Table view, `usage.series` | Errors are split into 4xx and 5xx. Every bucket in the range is there, empty ones included, and buckets are UTC. |
 | Errors as a red badge when above zero | Replaced | | Plain numbers. The chart carries the colour. |
 | Ranges | Replaced | Range filter | Templ showed every daily bucket for every tenant. React offers 24h hourly, 7d daily, 30d daily and 12 months monthly, and a Key filter. |
@@ -158,15 +158,16 @@ Three things changed on every page, so the tables don't repeat them:
 
 ### Usage detail (`/usage/detail?key_id=`)
 
-The whole page is replaced by the Key filter on Usage. The filter lives in component state, not the address, so no key ID goes into the URL or its history.
+The whole page is replaced by the Key filter on Usage, which takes its key from the address: `/@keysmith/usage?keyId=`. The key page's Open usage link lands there. Only the key goes in the URL, and picking another key replaces it in place, so Back still leaves the page. A key past the first 100, which the select doesn't list, still shows as the chosen key.
 
 | Templ element | Status | Where it lives now | Note |
 |---|---|---|---|
 | Back to Usage | Replaced | | "All keys" in the Key filter. |
 | Header: "Usage: name", `prefix_****hint` | Replaced | Key filter | The filter names the key. |
-| Stats (shown only with aggregates): Total Requests, Error Rate, Avg Latency, 5xx Errors | Replaced | `usage.series`, `usage.records` | As on Usage: per bucket, and the request total for the range. |
+| Stats (shown only with aggregates): Error Rate, Avg Latency, 5xx Errors | Replaced | Range summary, `usage.series` | As on Usage, for the key and the chosen range. |
+| Stats: Total Requests (all time) | Dropped | | As on Usage: nothing counts all time, and the range summary counts up to 12 months. |
 | Aggregated Usage table | Migrated | Table view | |
-| Request Log (100 rows) with count badge | Migrated | Requests table, `usage.records` `keyId` | Paged, with the total in the caption. |
+| Request Log (100 rows) with count badge | Migrated | Requests table, `usage.records` `keyId` | Paged, with the total in the caption. Works for any key, including one past the first 100. |
 | Empty state "No requests have been made with this key yet." | Migrated | | "No requests recorded in this range." |
 
 ### Settings (`/settings`)
@@ -194,7 +195,7 @@ The whole page is replaced by the Key filter on Usage. The filter lives in compo
 | Capability `searchable` | Dropped | | The contributor never implemented `Search`, so the flag answered no searches. |
 | Widget `keysmith-stats` (Total Keys, Active) | Replaced | Overview stats | |
 | Widget `keysmith-recent-keys` (5 newest, name and hint, "No keys yet.") | Replaced | Overview Recent keys | |
-| Widget `keysmith-usage-summary` (Total Requests, all time, every tenant) | Replaced | Overview "Requests in the last 24h" | Reads "Not recorded" until your application records usage, so silence isn't mistaken for a quiet day. |
+| Widget `keysmith-usage-summary` (Total Requests, all time, every tenant) | Replaced | Overview "Requests in the last 24h" | Reads "Not recorded" until your application records usage, so silence isn't mistaken for a quiet day. The all-time count is gone, as on Usage. |
 | `widgets/stats.templ` `StatsWidget`, `widgets/recent_keys.templ` `RecentKeysWidget` | Dropped | | Never rendered: `RenderWidget` wrote its own HTML. |
 | `dashboard.Plugin` (widgets, settings panel, pages), `PluginWidget`, `PluginPage` | Dropped | | Let hook plugins render templ into the old dashboard. Nothing in forgery implements them (spec). If you need an extension point again, the React shell's sub-plugin slots are where it would go. |
 | `KeyDetailContributor` | Dropped | | Same. |
@@ -228,9 +229,7 @@ The engine can do these and the dashboard doesn't offer them:
 - `key.Store.GetByPrefix` and `key.Store.DeleteByTenant`
 - `usage.Store.RecordBatch`, `DailyCount` and `MonthlyCount`
 - A usage-recording middleware. Usage only exists when your application calls `RecordUsage`.
-- Filtering Rotations and Usage by key from the key page. Its "View all" and "Open usage" links land unfiltered, and you pick the key again.
-- The Usage page's Key filter lists the first 100 keys. A key past that still has its 7-day chart on its own page, but you can't filter the request rows down to it.
-- A policy filter on the Keys list. `keys.list` takes `policyId` and the policy page uses it, but the Keys page's filter bar has environment and state only.
+- Request totals over all time. Every count is for a range: the last 24h on the overview, 7 days on a key's page, and up to 12 months on Usage.
 
 ## Breaking changes for anyone upgrading keysmith
 
