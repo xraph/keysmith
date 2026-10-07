@@ -26,7 +26,7 @@ Three things changed on every page, so the tables don't repeat them:
 
 - The templ pages ran actions as GET requests (`/keys/detail?key_id=...&action=revoke`) behind a browser `confirm()`. The React pages send contract commands, and every destructive action has its own dialog.
 - Templ rows were clickable through htmx. React rows link by name.
-- Templ lists read one fixed page (50 keys, 100 policies, 200 scopes, 50 rotations, 50 usage records) with no paging. React lists page, and say when there is more.
+- Templ lists read one fixed page (50 keys, 100 policies, 200 scopes, 50 rotations, 50 usage records) with no paging. In React, keys, rotations and usage records page. Policies and scopes read the first 200 and say when there are more.
 
 ### Overview (`/`)
 
@@ -78,7 +78,7 @@ Three things changed on every page, so the tables don't repeat them:
 | Policy card: max lifetime, grace period | Migrated | Policy section | |
 | Policy card: rate limit, burst, daily and monthly quota, rotation period | Replaced | `pages/policy-detail.tsx` | The key page names what Keysmith enforces. The rest sits on the policy page under the group that says who enforces it. |
 | Assigned Scopes card, with count badge | Replaced | `components/scopes-editor.tsx`, `keys.scopes.assign`, `keys.scopes.remove` | You can add and remove scopes here now. |
-| Empty state "No scopes assigned." | Migrated | Scopes section | |
+| Empty state "No scopes assigned." | Replaced | Scopes section | A dash (`NoneCell`, read as "no scopes"). |
 | Recent Usage table (20 rows: endpoint, method, status, latency, time) | Replaced | `pages/usage.tsx`, `usage.records` | The key page shows the chart. Open usage shows the rows on Usage with this key already chosen. |
 | Recent Usage: View All (to `/usage/detail?key_id=`) | Migrated | "Open usage", `/@keysmith/usage?keyId=` | Opens Usage with the key chosen in its Key filter. |
 | Empty state "No usage recorded yet." | Migrated | Usage section | "Usage appears once your application calls RecordUsage." |
@@ -158,7 +158,7 @@ Three things changed on every page, so the tables don't repeat them:
 
 ### Usage detail (`/usage/detail?key_id=`)
 
-The whole page is replaced by the Key filter on Usage, which takes its key from the address: `/@keysmith/usage?keyId=`. The key page's Open usage link lands there. Only the key goes in the URL, and picking another key replaces it in place, so Back still leaves the page. A key past the first 100, which the select doesn't list, still shows as the chosen key.
+The whole page is replaced by the Key filter on Usage, which takes its key from the address: `/@keysmith/usage?keyId=`. The key page's Open usage link lands there. Only the key goes in the URL. Picking another key is a navigation, so each change adds a history entry and Back steps through the keys you chose. A key past the first 100, which the select doesn't list, still shows as the chosen key.
 
 | Templ element | Status | Where it lives now | Note |
 |---|---|---|---|
@@ -175,7 +175,7 @@ The whole page is replaced by the Key filter on Usage, which takes its key from 
 | Templ element | Status | Where it lives now | Note |
 |---|---|---|---|
 | API Base Path | Dropped | | The contributor never passed it, so it always read "Default". |
-| Store Driver ("connected" or "unknown") | Migrated | `pages/settings.tsx`, `settings` | Healthy or Not answering, with the store's message. |
+| Store Driver ("connected" or "unknown") | Migrated | `pages/settings.tsx`, `settings` | Healthy or Not answering, with a fixed line. The driver's error stays in the server log. |
 | Routes Enabled | Dropped | | Never passed either, so it always read Enabled. |
 | Auto-Migration | Dropped | | Same. |
 | Registered Plugins list | Migrated | Plugins | |
@@ -195,7 +195,7 @@ The whole page is replaced by the Key filter on Usage, which takes its key from 
 | Capability `searchable` | Dropped | | The contributor never implemented `Search`, so the flag answered no searches. |
 | Widget `keysmith-stats` (Total Keys, Active) | Replaced | Overview stats | |
 | Widget `keysmith-recent-keys` (5 newest, name and hint, "No keys yet.") | Replaced | Overview Recent keys | |
-| Widget `keysmith-usage-summary` (Total Requests, all time, every tenant) | Replaced | Overview "Requests in the last 24h" | Reads "Not recorded" until your application records usage, so silence isn't mistaken for a quiet day. The all-time count is gone, as on Usage. |
+| Widget `keysmith-usage-summary` (Total Requests, all time, every tenant) | Replaced | Overview "Requests in the last 24h" | Reads "Not recorded" until your application records usage, so silence isn't mistaken for a quiet day. The all-time count is gone, as on Usage. The templ widgets refreshed themselves every 15 to 60 seconds. The overview has no auto-refresh and reads once per visit. |
 | `widgets/stats.templ` `StatsWidget`, `widgets/recent_keys.templ` `RecentKeysWidget` | Dropped | | Never rendered: `RenderWidget` wrote its own HTML. |
 | `dashboard.Plugin` (widgets, settings panel, pages), `PluginWidget`, `PluginPage` | Dropped | | Let hook plugins render templ into the old dashboard. Nothing in forgery implements them (spec). If you need an extension point again, the React shell's sub-plugin slots are where it would go. |
 | `KeyDetailContributor` | Dropped | | Same. |
@@ -249,6 +249,7 @@ These landed on keysmith main between 55b057f and 3928145. If you embed keysmith
 ### Engine behaviour
 
 - Rotation keeps the previous key valid for a grace window (7300130). It used to die at once, whatever `grace_ends` said. The window comes from `WithGrace`, then the policy's `GracePeriod`, then 24 hours. If you relied on the old key stopping immediately, as you would after a compromise, pass `WithGrace(0)`. Rotation records written before the fix never open a window (d361279).
+- `RotateKey` writes the rotation record before it replaces the key's hash (e2bb734). If the record write fails, the key is untouched and you get an error. Before, the old key could already be dead with no new key returned. The rotated hook fires only after both writes succeed.
 - `RotateKey` refuses a revoked or expired key with `ErrInvalidStateTransition`, and `RevokeKey` ends every open window on the key (7300130).
 - Revocation is terminal (74becf8). `SuspendKey` takes only an active key, and `RevokeKey` refuses a key that is already revoked, so the revoked hook fires once. `RevokedAt` wins over `State` everywhere the engine can see it (09eec0a).
 - `CreateKey` and `AssignScopes` refuse a scope name that doesn't exist in the key's tenant (`ErrScopeNotFound`) or that the key's policy doesn't allow (`ErrScopeNotAllowed`), before anything is written (5c293d9). This breaks authsome's `bridge/keysmithadapter` on its next keysmith bump: it passes scope names it never creates.
@@ -257,7 +258,7 @@ These landed on keysmith main between 55b057f and 3928145. If you embed keysmith
 - Policy and scope names are unique per tenant on every backend: `ErrPolicyNameTaken` and `ErrScopeNameTaken` (e4e4a67). Memory used to take duplicates, and the SQL and mongo stores answered a raw driver error.
 - `DeletePolicy` ignores revoked keys, so a policy that only revoked keys use can go (bf151c9, 252b2d7). `ErrPolicyInUse` keeps its identity, but its text changed from "policy is assigned to active keys" to "policy is used by keys that are not revoked". Match it with `errors.Is`, not the string.
 - `DeleteScope` refuses while another scope in the tenant names it as parent (`ErrScopeHasChildren`, 252b2d7) or while a policy in the tenant lists it in `allowedScopes` (`ErrScopeAllowedByPolicy`, 8abe1da).
-- `usage.Store.Aggregate` groups the raw `keysmith_usage` rows on every call (44850c1). The period must be `hourly`, `daily` or `monthly`, or you get `usage.ErrInvalidPeriod`. Buckets are UTC. `After` is inclusive and `Before` exclusive on every backend (memory's `Before` used to be inclusive, which also changes its `Query` and `Count`). Only buckets with rows come back. Leave out the key and you get sums across keys with a zero key ID. `Aggregate` ignores `Limit` and `Offset`, so bound the range with `After` and `Before` (93bcaab).
+- `usage.Store.Aggregate` groups the raw `keysmith_usage` rows on every call (44850c1). The period must be `hourly`, `daily` or `monthly`, or you get `usage.ErrInvalidPeriod`. Buckets are UTC. `After` is inclusive and `Before` exclusive on every backend (memory's `Before` used to be inclusive, which also changes its `Query` and `Count`). Only buckets with rows come back. Leave out the key and you get sums across keys with a zero key ID. `Aggregate` ignores `Limit` and `Offset`, so bound the range with `After` and `Before` (documented in 93bcaab).
 
 ### Types and interfaces
 
@@ -265,12 +266,12 @@ These landed on keysmith main between 55b057f and 3928145. If you embed keysmith
 - `usage.Aggregation.P50Latency` and `P99Latency` are `*int64` now, are never set, and drop out of the JSON (44850c1). The four backends can't compute the same percentile. `ServerErrorCount` is new.
 - `Engine.CleanupGraceExpired` is removed (7300130). It never acted, and with its filter corrected it would have revoked live keys.
 - The `dashboard` package is deleted, and the extension no longer has `DashboardContributor()` (c08cf0f).
-- Additions that compile unchanged: `RotateKey(ctx, id, reason, opts ...RotateOption)` with `WithGrace` and `WithRotatedBy`; `Engine.EndGrace`; `Engine.RateLimiterConfigured`; `ValidationResult.ViaPreviousKey` and `GraceEnds`; `rotation.Record.OldHint` and `NewHint`. `key.StateRotated` stays defined, and the engine never assigns it.
+- Additions that compile unchanged at call sites: `RotateKey(ctx, id, reason, opts ...RotateOption)` with `WithGrace` and `WithRotatedBy` (an interface of your own that names the old three-argument signature needs the variadic); `Engine.EndGrace`; `Engine.RateLimiterConfigured`; `ValidationResult.ViaPreviousKey` and `GraceEnds`; `rotation.Record.OldHint` and `NewHint`. `key.StateRotated` stays defined, and the engine never assigns it.
 
 ### REST API
 
 - Missing keys, policies, scopes and rotations answer 404 where they answered 500 (6106369).
-- 409 for revoking a key twice, including a repeated `DELETE /keys/:id` that used to succeed (74becf8), and for a duplicate policy or scope name and a refused scope delete (af19505).
+- 409 for revoking a key twice, including a repeated `DELETE /keys/:id` that used to succeed, and for suspending a key that isn't active, which used to succeed even on a revoked key (74becf8). Duplicate policy or scope names and refused scope deletes answer 409 too (af19505).
 - 400 for `ErrKeyLifetimeExceeded` and for an unknown usage period.
 - The `/usage` endpoints return data now. They read the table nothing wrote before 44850c1.
 
@@ -297,6 +298,7 @@ Reported during the migration and not fixed. One line each, with where it lives.
 - forge's binder treats every REST create field as required (no scope without a parent, no policy without every duration), and the create handlers call `ctx.JSON` and also return the response, so the body is written twice (`api/*_handler.go`).
 - authsome has its own API keys (`plugins/apikey`), and its `WithKeysmith` adapter builds a keysmith `KeyManager` nothing calls. Keys minted through it have no tenant, so the dashboard never shows them (authsome).
 - `warden_hook` needs a `WardenBridge` that nothing in forgery implements, and reacts to create and revoke only, not to scope changes, reactivation or rotation (`warden_hook/extension.go`).
+- forge-dashboard's PluginHost resolver and the kit sidebar carry the current query string across every navigation, so `?keyId=` follows you from Usage to Rotations through the sidebar. Since 8ac23d7 it is always the key you actually chose. The plugin API has no replace navigation (forge-dashboard `packages/host/src/host/PluginHost.tsx`, kit `nav-main.tsx` and `nav-tree.tsx`).
 - Open question: should `tenantFrom` prefer the forge Scope's org over `dashboard.tenant_id`? Under authsome the dashboard shows the configured tenant, not the session's org (`extension/contract/tenant.go`).
 - Hooks get the request context, so a hook reading `forge.ScopeFrom` sees the session's org, not the contract's tenant. Only `CreateKey`, `CreatePolicy` and `CreateScope` run under `engineCtx` (`extension/contract`).
 - Waiting on confirmation: `scopes.delete` also refusing while a policy allows the scope was a controller ruling, made to match the parent rule (8abe1da).
