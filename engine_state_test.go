@@ -19,7 +19,7 @@ import (
 	"github.com/xraph/keysmith/store/memory"
 )
 
-func newEngine(t *testing.T, s store.Store, opts ...keysmith.Option) (*keysmith.Engine, context.Context) { //nolint:unparam // opts is used by later tests
+func newEngine(t *testing.T, s store.Store, opts ...keysmith.Option) (*keysmith.Engine, context.Context) {
 	t.Helper()
 	eng, err := keysmith.NewEngine(append([]keysmith.Option{keysmith.WithStore(s)}, opts...)...)
 	require.NoError(t, err)

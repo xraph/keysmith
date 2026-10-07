@@ -2,6 +2,7 @@ package keysmith_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/keysmith"
+	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/internal/storetest"
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/policy"
@@ -145,5 +147,88 @@ func TestDeleteScopeChecksChildrenBeforePolicies(t *testing.T) {
 		require.NoError(t, eng.CreateScope(ctx, &scope.Scope{Name: "billing:read", Parent: "billing"}))
 		require.NoError(t, eng.CreatePolicy(ctx, &policy.Policy{Name: "p", AllowedScopes: []string{"billing"}}))
 		require.ErrorIs(t, eng.DeleteScope(ctx, parent.ID), keysmith.ErrScopeHasChildren)
+	})
+}
+
+// failingScopes wraps a scope store so AssignToKey fails.
+type failingScopes struct {
+	scope.Store
+	err error
+}
+
+func (f failingScopes) AssignToKey(context.Context, id.KeyID, []string) error { return f.err }
+
+// failingKeys wraps a key store so Delete fails.
+type failingKeys struct {
+	key.Store
+	err error
+}
+
+func (f failingKeys) Delete(context.Context, id.KeyID) error { return f.err }
+
+// failingStore swaps in the wrapped stores and leaves the rest alone.
+type failingStore struct {
+	store.Store
+	scopes scope.Store
+	keys   key.Store
+}
+
+func (f failingStore) Scopes() scope.Store {
+	if f.scopes != nil {
+		return f.scopes
+	}
+	return f.Store.Scopes()
+}
+
+func (f failingStore) Keys() key.Store {
+	if f.keys != nil {
+		return f.keys
+	}
+	return f.Store.Keys()
+}
+
+// createdRecorder counts created hook calls.
+type createdRecorder struct{ created int }
+
+func (*createdRecorder) Name() string { return "created-recorder" }
+
+func (r *createdRecorder) OnKeyCreated(context.Context, *key.Key) error {
+	r.created++
+	return nil
+}
+
+func TestCreateKeyDeletesTheKeyWhenScopeAssignmentFails(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		assignErr := errors.New("assign boom")
+		rec := &createdRecorder{}
+		eng, ctx := newEngine(t, failingStore{Store: s, scopes: failingScopes{Store: s.Scopes(), err: assignErr}}, keysmith.WithExtension(rec))
+		createScope(t, eng, ctx, "read")
+
+		_, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, Scopes: []string{"read"}})
+		require.ErrorIs(t, err, assignErr)
+
+		n, err := s.Keys().Count(context.Background(), &key.ListFilter{TenantID: "t1"})
+		require.NoError(t, err)
+		assert.Zero(t, n, "the key must not outlive its failed scope assignment")
+		assert.Zero(t, rec.created, "no created hook fires for a key that was deleted")
+	})
+}
+
+func TestCreateKeyReportsBothErrorsWhenTheCleanupFailsToo(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		assignErr := errors.New("assign boom")
+		deleteErr := errors.New("delete boom")
+		rec := &createdRecorder{}
+		eng, ctx := newEngine(t, failingStore{
+			Store:  s,
+			scopes: failingScopes{Store: s.Scopes(), err: assignErr},
+			keys:   failingKeys{Store: s.Keys(), err: deleteErr},
+		}, keysmith.WithExtension(rec))
+		createScope(t, eng, ctx, "read")
+
+		_, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, Scopes: []string{"read"}})
+		require.ErrorIs(t, err, assignErr)
+		require.ErrorIs(t, err, deleteErr)
+		assert.Zero(t, rec.created)
 	})
 }

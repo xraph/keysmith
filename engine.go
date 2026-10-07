@@ -145,7 +145,15 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 	// Assign scopes.
 	if len(input.Scopes) > 0 {
 		if err := e.store.Scopes().AssignToKey(ctx, k.ID, input.Scopes); err != nil {
-			return nil, fmt.Errorf("assign scopes: %w", err)
+			// The raw key is never returned on this path, so the stored
+			// key is unreachable. Delete it rather than leave a live key
+			// that has none of the scopes the caller asked for. The caller
+			// may have cancelled ctx, which must not stop the cleanup.
+			assignErr := fmt.Errorf("assign scopes: %w", err)
+			if delErr := e.store.Keys().Delete(context.WithoutCancel(ctx), k.ID); delErr != nil {
+				return nil, errors.Join(assignErr, fmt.Errorf("delete key after failed scope assignment: %w", delErr))
+			}
+			return nil, assignErr
 		}
 		k.Scopes = input.Scopes
 	}
