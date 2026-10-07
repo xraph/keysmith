@@ -72,7 +72,7 @@ func TestKeysListIsTenantScopedByID(t *testing.T) {
 func TestKeysListFollowsTheSessionsOrg(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, eng := setup(t, s)
-		create(t, eng, "t1", nil)
+		fallback := create(t, eng, "t1", nil)
 		mine := create(t, eng, "org_1", nil)
 		theirs := create(t, eng, "org_2", nil)
 
@@ -91,7 +91,8 @@ func TestKeysListFollowsTheSessionsOrg(t *testing.T) {
 		out, err = keysListHandler(deps)(appOnlyCtx(), keysListRequest{}, principal())
 		require.NoError(t, err)
 		require.Len(t, out.Keys, 1)
-		assert.NotEqual(t, mine.Key.ID.String(), out.Keys[0].ID)
+		assert.Equal(t, fallback.Key.ID.String(), out.Keys[0].ID)
+		assert.EqualValues(t, 1, out.Total)
 	})
 }
 
