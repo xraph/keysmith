@@ -14,7 +14,11 @@ import (
     "github.com/xraph/keysmith/store/sqlite"
 )
 
-db, err := grove.Open(sqlitedriver.Open("keysmith.db"))
+sdb := sqlitedriver.New()
+if err := sdb.Open(ctx, sqlite.DSN("keysmith.db")); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(sdb)
 if err != nil {
     log.Fatal(err)
 }
@@ -27,10 +31,22 @@ if err := s.Migrate(ctx); err != nil {
 eng, err := keysmith.NewEngine(keysmith.WithStore(s))
 ```
 
-Pass `":memory:"` for a fully in-process, zero-persistence store useful in tests:
+For tests, point it at a file under `t.TempDir()`. Don't use `":memory:"`: every pooled connection opens its own empty in-memory database, so the tables `Migrate` creates on one connection are missing on the next.
 
-```go
-db, err := grove.Open(sqlitedriver.Open(":memory:"))
+## Connection settings
+
+Always open the database with `sqlite.DSN(path)`. It adds three settings to the DSN, and modernc's sqlite driver applies them to every connection the pool opens:
+
+| Setting | Why |
+| ------- | --- |
+| `_pragma=busy_timeout(5000)` | A write waits up to 5 seconds for another connection's write lock. `ValidateKey` writes the key's last-used time in the background, so the next write often finds the lock taken. Without a timeout it fails at once with `SQLITE_BUSY`. |
+| `_pragma=foreign_keys(1)` | `ON DELETE CASCADE` runs on every connection. Deleting a key takes its scope links, usage and rotation rows with it, and deleting a scope takes its links. |
+| `_txlock=immediate` | Transactions take the write lock at `BEGIN`. SQLite doesn't wait when a transaction that has already read tries to write, and `AssignToKey` reads first. Read-only transactions still begin deferred. |
+
+grove's driver turns foreign keys on for one connection only and sets no busy timeout, and `sqlite.New` takes a `*grove.DB` it didn't open, so the store can't fix this after the fact. If you open the database some other way, from a grove extension's config for example, put the three parameters on that DSN yourself:
+
+```
+keysmith.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate
 ```
 
 ## Migrations
@@ -62,8 +78,8 @@ Migrations are idempotent and safe to run on every startup.
 |--------|--------|
 | Driver | grove ORM + sqlitedriver |
 | Migrations | grove orchestrator with programmatic migrations |
-| Transactions | `AssignToKey`, `RemoveFromKey` and `RecordBatch` each run in one SQLite transaction. Nothing else does. |
-| Concurrency | Multiple readers, single writer (WAL mode) |
+| Transactions | `AssignToKey`, `RemoveFromKey` and `RecordBatch` each run in one SQLite transaction, begun `IMMEDIATE` with the DSN above. Nothing else does. |
+| Concurrency | Multiple readers, single writer (WAL mode). Writers queue on the busy timeout. |
 | Subsystems | keys, policies, scopes, usages, rotations |
 
 ## Health checks

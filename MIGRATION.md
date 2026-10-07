@@ -233,7 +233,7 @@ The engine can do these and the dashboard doesn't offer them:
 
 ## Breaking changes for anyone upgrading keysmith
 
-These landed on keysmith main after 55b057f, up to and including 05ef9ca, which deleted the templ dashboard. If you embed keysmith, read them before you bump.
+These landed on keysmith main after 55b057f, up to and including 05ef9ca, which deleted the templ dashboard. The sqlite DSN entry came later, in afcf71c. If you embed keysmith, read them before you bump.
 
 ### Stores and migrations
 
@@ -241,10 +241,11 @@ These landed on keysmith main after 55b057f, up to and including 05ef9ca, which 
 - `keysmith_usage_agg` is dropped. Nothing ever wrote to it. Migration `20260930000002` (`drop_usage_agg` on postgres and sqlite, `drop_keysmith_usage_agg` on mongo) removes it (44850c1). `Store.Migrate` runs it too on postgres and sqlite. On mongo, `Store.Migrate` only builds indexes, so the drop runs only through the grove orchestrator (`mongostore.Migrations`). An old, empty collection is harmless if it stays.
 - Other new migrations: `20260930000001` adds `old_hint` and `new_hint` to rotations and indexes `old_key_hash` (f0d6886, and df5f47d for mongo's index); `20260930000003` (`close_legacy_grace_windows`) closes the grace windows of rotations recorded before the grace fix (d361279); and on mongo, `20261005000001` (`add_keysmith_stable_sort_indexes`) adds `{tenant_id, created_at, _id}` and `{key_id, created_at, _id}` to usage and rotations (f9e328b).
 - On mongo, a policy's rate-limit window, max key lifetime, rotation period and grace period read back as zero before 0edcdb7, so they were ignored. They read the stored values now. No data migration is needed, but policies you have had for a while start doing what they say.
+- Open a sqlite database with `sqlite.DSN(path)` (afcf71c). It gives every pooled connection a 5 second busy timeout, foreign keys on and `BEGIN IMMEDIATE` transactions. Before, grove's driver turned foreign keys on for one connection out of ten and set no busy timeout, so `ON DELETE CASCADE` ran at random and the write after a `ValidateKey` could fail with `SQLITE_BUSY`. The store takes a `*grove.DB` it didn't open, so it can't do this for you. If a grove extension's config opens the database, add `_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate` to that DSN yourself.
 - Mongo usage aggregation uses `$dateTrunc`, so you need MongoDB 5.0 or later (44850c1).
 - Stores return not-found errors that `errors.Is` matches against `keysmith.ErrKeyNotFound` and friends (6106369). Code that string-matched the old private errors will stop matching.
 - Lists page in a stable order on every backend: keys, policies, rotations and usage by `created_at DESC, id DESC`, scopes by name and then id (8b62464, 226f56a, 822e68c, a8799a1). The memory store's usage query is newest first now. It used to be oldest first.
-- On memory and mongo, deleting a scope takes it off every key in its tenant (1c84546). Postgres and sqlite already cascaded. Before this, re-creating a deleted scope's name on memory handed it back to every key that once held it.
+- On memory and mongo, deleting a scope takes it off every key in its tenant (1c84546). Postgres already cascaded, and so does sqlite on a connection with foreign keys on, which `sqlite.DSN` gives every connection (afcf71c). Before this, re-creating a deleted scope's name on memory handed it back to every key that once held it.
 
 ### Engine behaviour
 
@@ -277,7 +278,7 @@ These landed on keysmith main after 55b057f, up to and including 05ef9ca, which 
 
 ### Which backends the tests cover
 
-Plain `go test ./...` runs the store tests against memory and sqlite only. To cover postgres and mongo as well, run `make test-backends`. It needs Docker, starts throwaway `keysmith-test-pg` and `keysmith-test-mongo` containers on odd ports, runs the whole suite against all four backends and removes the containers when it's done. If you'd rather use servers you already have, set `KEYSMITH_TEST_PG_DSN` or `KEYSMITH_TEST_MONGO_URI` (or both) before `go test ./...`, and each one adds its backend. Expect the sqlite `SQLITE_BUSY` flake listed under open findings on any of these runs.
+Plain `go test ./...` runs the store tests against memory and sqlite only. To cover postgres and mongo as well, run `make test-backends`. It needs Docker, starts throwaway `keysmith-test-pg` and `keysmith-test-mongo` containers on odd ports, runs the whole suite against all four backends and removes the containers when it's done. If you'd rather use servers you already have, set `KEYSMITH_TEST_PG_DSN` or `KEYSMITH_TEST_MONGO_URI` (or both) before `go test ./...`, and each one adds its backend.
 
 ## Open findings for the maintainer
 
@@ -290,8 +291,6 @@ Reported during the migration and not fixed. One line each, with where it lives.
 - If the key update fails after its rotation record is written, the orphan record can shadow a later zero-grace rotation of the same old hash. The latest-created record for an old hash should decide (`engine.go` `RotateKey`, `GetInGraceByOldHash` in each rotation store).
 - `ValidateKey` treats a `GetByHash` store outage as a miss and answers `ErrInvalidKey` (`engine.go`, `ValidateKey`).
 - `FireKeyValidationFailed` hands the presented raw key to every plugin, including for a key that was found but is inactive (`engine.go` `ValidateKey`, `plugin/manager.go`).
-- On sqlite, the background `UpdateLastUsed` that `ValidateKey` starts can hit `SQLITE_BUSY` against the next write. Under load it fails roughly one run in three: a close-out run of `go test -count=15 ./...` failed 5 of 15, and focused runs of the affected tests failed 4 of 40 and 9 of 40. Until it's fixed, `go test ./...` and CI fail intermittently (`engine.go` `ValidateKey`, `store/sqlite`).
-- On sqlite, `PRAGMA foreign_keys=ON` runs on one pooled connection only, so `ON DELETE CASCADE` is skipped at random and orphan `keysmith_key_scopes` rows stay (grove's sqlite driver sets it at open, and `store/sqlite` never caps the pool).
 - The memory store's `ListByKey` matches scope names across tenants, and its `AssignToKey` checks neither existence nor tenant (`store/memory`, scope store).
 - `DeletePolicy` and `DeleteScope` check and then delete without a transaction, so a key or child scope created in between dangles (`engine.go`).
 - Two writes that race past the name check hit the unique index and surface as `INTERNAL` on the contract and 500 on REST (`engine.go` `checkPolicyName` and `CreateScope`, the stores' `(tenant_id, name)` indexes).
