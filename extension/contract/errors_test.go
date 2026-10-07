@@ -30,6 +30,7 @@ func TestMapError(t *testing.T) {
 		{keysmith.ErrPolicyInUse, dashcontract.CodeConflict},
 		{fmt.Errorf("create policy: %w", keysmith.ErrPolicyNameTaken), dashcontract.CodeConflict},
 		{fmt.Errorf("create scope: %w", keysmith.ErrScopeNameTaken), dashcontract.CodeConflict},
+		{fmt.Errorf("update key: %w", keysmith.ErrKeyConflict), dashcontract.CodeConflict},
 		{errors.New("pq: connection refused to 10.0.0.5"), dashcontract.CodeInternal},
 	}
 	for _, tc := range cases {
@@ -43,5 +44,7 @@ func TestMapError(t *testing.T) {
 	assert.Equal(t, "a policy with this name already exists", ce.Message)
 	require.ErrorAs(t, mapError(keysmith.ErrScopeNameTaken), &ce)
 	assert.Equal(t, "a scope with this name already exists", ce.Message)
+	require.ErrorAs(t, mapError(fmt.Errorf("update key: %w", keysmith.ErrKeyConflict)), &ce)
+	assert.Equal(t, "this key changed while you were acting on it. Reload and try again.", ce.Message)
 	assert.Nil(t, mapError(nil))
 }

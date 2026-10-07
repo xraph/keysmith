@@ -121,3 +121,33 @@ func TestCloseLegacyGraceWindows(t *testing.T) {
 		assertClosedAndKept(t, s, legacy, modern)
 	})
 }
+
+// Both migration paths add the version column to a table that has rows, and
+// those rows start at version 0.
+func TestKeyVersionMigration(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	now := time.Now()
+	k := &key.Key{
+		ID: id.NewKeyID(), TenantID: "t1", AppID: "app", Name: "k", Prefix: "sk",
+		Hint: "a3f8", KeyHash: "hash-cur", Environment: key.EnvLive, State: key.StateActive,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, s.Keys().Create(ctx, k))
+	require.NoError(t, s.Keys().UpdateState(ctx, k.ID, key.StateSuspended))
+
+	for name, up := range map[string]func() error{
+		"grove group":   func() error { return migrationByVersion(t, "20261007000001").Up(ctx, pgmigrate.New(s.db)) },
+		"Store.Migrate": func() error { return s.Migrate(ctx) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := s.db.Exec(ctx, `ALTER TABLE keysmith_keys DROP COLUMN version`)
+			require.NoError(t, err)
+			require.NoError(t, up())
+			got, err := s.Keys().Get(ctx, k.ID)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), got.Version)
+			require.NoError(t, up(), "running it again changes nothing")
+		})
+	}
+}

@@ -10,6 +10,9 @@ import (
 	"github.com/xraph/keysmith/usage"
 )
 
+// msgKeyConflict answers a key command whose write lost a race.
+const msgKeyConflict = "this key changed while you were acting on it. Reload and try again."
+
 // mapError translates a keysmith error into a *dashcontract.Error the
 // dashboard client can branch on.
 //
@@ -43,6 +46,9 @@ func mapError(err error) error {
 	case errors.Is(err, keysmith.ErrInvalidStateTransition),
 		errors.Is(err, keysmith.ErrPolicyInUse):
 		return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: err.Error()}
+	case errors.Is(err, keysmith.ErrKeyConflict):
+		// Another write landed between the engine's read and its write.
+		return &dashcontract.Error{Code: dashcontract.CodeConflict, Message: msgKeyConflict}
 	default:
 		return &dashcontract.Error{Code: dashcontract.CodeInternal, Message: "an internal error occurred"}
 	}

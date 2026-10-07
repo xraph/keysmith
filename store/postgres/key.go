@@ -10,7 +10,9 @@ import (
 	"github.com/xraph/grove/drivers/pgdriver"
 
 	"github.com/xraph/keysmith/id"
+	"github.com/xraph/keysmith/internal/groveset"
 	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/store"
 )
 
 type keyStore struct {
@@ -65,9 +67,21 @@ func (s *keyStore) GetByPrefix(ctx context.Context, prefix, hint string) (*key.K
 	return keyFromModel(m)
 }
 
+// Update writes every column the model holds, as a model-based UPDATE would,
+// except version, which it counts up in the same statement. Explicit Set
+// calls replace the model-based SET wholesale, so groveset lists the columns.
 func (s *keyStore) Update(ctx context.Context, k *key.Key) error {
-	m := keyToModel(k)
-	res, err := s.db.NewUpdate(m).WherePK().Exec(ctx)
+	cols, err := groveset.Columns(keyToModel(k), "version")
+	if err != nil {
+		return fmt.Errorf("keysmith/postgres: update key: %w", err)
+	}
+	q := s.db.NewUpdate((*keyModel)(nil))
+	for _, c := range cols {
+		q = q.Set(`"`+c.Name+`" = ?`, c.Value)
+	}
+	res, err := q.Set("version = version + 1").
+		Where("id = ?", k.ID.String()).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("keysmith/postgres: update key: %w", err)
 	}
@@ -78,10 +92,42 @@ func (s *keyStore) Update(ctx context.Context, k *key.Key) error {
 	return nil
 }
 
+func (s *keyStore) UpdateIfVersion(ctx context.Context, k *key.Key, version int64) error {
+	m := keyToModel(k)
+	m.Version = version + 1
+	res, err := s.db.NewUpdate(m).
+		WherePK().
+		Where("version = ?", version).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("keysmith/postgres: update key: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return s.missingOrConflict(ctx, k.ID)
+	}
+	k.Version = version + 1
+	return nil
+}
+
+// missingOrConflict tells a version-checked update that matched no row
+// apart: the key is gone, or it is there at another version.
+func (s *keyStore) missingOrConflict(ctx context.Context, keyID id.KeyID) error {
+	n, err := s.db.NewSelect((*keyModel)(nil)).Where("id = ?", keyID.String()).Count(ctx)
+	if err != nil {
+		return fmt.Errorf("keysmith/postgres: look up key after a refused update: %w", err)
+	}
+	if n == 0 {
+		return errNotFound("key")
+	}
+	return store.ErrKeyConflict
+}
+
 func (s *keyStore) UpdateState(ctx context.Context, keyID id.KeyID, state key.State) error {
 	res, err := s.db.NewUpdate((*keyModel)(nil)).
 		Set("state = ?", string(state)).
 		Set("updated_at = ?", time.Now().UTC()).
+		Set("version = version + 1").
 		Where("id = ?", keyID.String()).
 		Exec(ctx)
 	if err != nil {

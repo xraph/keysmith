@@ -38,6 +38,9 @@ type keyModel struct {
 	RevokedAt       *time.Time     `grove:"revoked_at"     bson:"revoked_at,omitempty"`
 	CreatedAt       time.Time      `grove:"created_at"     bson:"created_at"`
 	UpdatedAt       time.Time      `grove:"updated_at"     bson:"updated_at"`
+	// Version reads back as 0 from a document written before the field
+	// existed.
+	Version int64 `grove:"version" bson:"version"`
 }
 
 func keyToModel(k *key.Key) *keyModel {
@@ -60,6 +63,7 @@ func keyToModel(k *key.Key) *keyModel {
 		RevokedAt:   k.RevokedAt,
 		CreatedAt:   k.CreatedAt,
 		UpdatedAt:   k.UpdatedAt,
+		Version:     k.Version,
 	}
 	if k.PolicyID != nil {
 		s := k.PolicyID.String()
@@ -92,6 +96,7 @@ func keyFromModel(m *keyModel) (*key.Key, error) {
 		RevokedAt:   m.RevokedAt,
 		CreatedAt:   m.CreatedAt,
 		UpdatedAt:   m.UpdatedAt,
+		Version:     m.Version,
 	}
 	if m.PolicyID != nil {
 		pid, err := id.ParsePolicyID(*m.PolicyID)

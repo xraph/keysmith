@@ -264,5 +264,19 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_usage_agg_tenant ON keysmith_usage_agg (
 			// restore.
 			Down: func(context.Context, migrate.Executor) error { return nil },
 		},
+		// The write counter version-checked key updates compare. Existing
+		// keys start at 0.
+		&migrate.Migration{
+			Name:    "key_version",
+			Version: "20261007000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE keysmith_keys ADD COLUMN version INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE keysmith_keys DROP COLUMN version`)
+				return err
+			},
+		},
 	)
 }

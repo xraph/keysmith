@@ -127,14 +127,37 @@ func (s *keyStore) Update(_ context.Context, k *key.Key) error {
 	if !ok {
 		return errNotFound("key")
 	}
-	// Update hash index if hash changed.
+	st.writeKey(old, k, old.Version+1)
+	return nil
+}
+
+func (s *keyStore) UpdateIfVersion(_ context.Context, k *key.Key, version int64) error {
+	st := s.store()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	old, ok := st.keys[k.ID.String()]
+	if !ok {
+		return errNotFound("key")
+	}
+	if old.Version != version {
+		return store.ErrKeyConflict
+	}
+	st.writeKey(old, k, version+1)
+	k.Version = version + 1
+	return nil
+}
+
+// writeKey replaces old with a copy of k at the given version and keeps the
+// hash index in step. The caller holds the write lock.
+func (s *Store) writeKey(old, k *key.Key, version int64) {
 	if old.KeyHash != k.KeyHash {
-		delete(st.hashIndex, old.KeyHash)
-		st.hashIndex[k.KeyHash] = k.ID.String()
+		delete(s.hashIndex, old.KeyHash)
+		s.hashIndex[k.KeyHash] = k.ID.String()
 	}
 	cp := *k
-	st.keys[k.ID.String()] = &cp
-	return nil
+	cp.Version = version
+	s.keys[k.ID.String()] = &cp
 }
 
 func (s *keyStore) UpdateState(_ context.Context, keyID id.KeyID, state key.State) error {
@@ -148,6 +171,7 @@ func (s *keyStore) UpdateState(_ context.Context, keyID id.KeyID, state key.Stat
 	}
 	k.State = state
 	k.UpdatedAt = time.Now()
+	k.Version++
 	return nil
 }
 

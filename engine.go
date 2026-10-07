@@ -267,7 +267,10 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 // keeps validating until its grace window ends. The window comes from
 // WithGrace if given, else the key's policy GracePeriod, else 24 hours. A
 // window of zero stops the previous key at once. A revoked or expired key
-// cannot be rotated, and a key with RevokedAt set counts as revoked.
+// cannot be rotated, and a key with RevokedAt set counts as revoked. If
+// another write reaches the key between the read and the write (a revoke,
+// for example), the rotation is refused with ErrKeyConflict and the key keeps
+// the other write.
 func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, opts ...RotateOption) (*key.CreateResult, error) {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
@@ -319,9 +322,14 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	// Record the rotation before touching the key. Until the key update
 	// lands, the old hash is still the key's current hash, so GetByHash
 	// finds it and callers on the old key never fall into a gap. If the key
-	// update then fails, the record stays as a history row the fallback
-	// cannot reach: it only runs for a hash that is no key's current hash,
-	// and the old hash still is one.
+	// update then fails, the record stays: rotation.Store cannot delete one
+	// record. When nothing else wrote the key, the fallback cannot reach it,
+	// because it only runs for a hash that is no key's current hash and the
+	// old hash still is one. When the update lost a race (ErrKeyConflict),
+	// the record names a new hash no key ever had. After a revoke that is
+	// harmless, since the fallback refuses a revoked key, but after a
+	// competing rotation it can hold the old hash's window open longer than
+	// the winner chose.
 	rec := &rotation.Record{
 		ID:         id.NewRotationID(),
 		KeyID:      k.ID,
@@ -345,7 +353,7 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 	k.RotatedAt = &now
 	k.UpdatedAt = now
 
-	if err := e.store.Keys().Update(ctx, k); err != nil {
+	if err := e.store.Keys().UpdateIfVersion(ctx, k, k.Version); err != nil {
 		return nil, fmt.Errorf("update key: %w", err)
 	}
 
@@ -356,6 +364,8 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 
 // RevokeKey permanently disables a key. Revocation is terminal: no state
 // change leads out of it, and revoking twice is refused so hooks fire once.
+// If the key changes between the read and the write, the revoke is refused
+// with ErrKeyConflict and the caller can read the key again and retry.
 func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
@@ -370,7 +380,7 @@ func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) e
 	k.RevokedAt = &now
 	k.UpdatedAt = now
 
-	if err := e.store.Keys().Update(ctx, k); err != nil {
+	if err := e.store.Keys().UpdateIfVersion(ctx, k, k.Version); err != nil {
 		return fmt.Errorf("update key: %w", err)
 	}
 
@@ -398,7 +408,9 @@ func (e *Engine) EndGrace(ctx context.Context, keyID id.KeyID) (int64, error) {
 
 // SuspendKey temporarily disables an active key. Only an active key can be
 // suspended; anything else, a revoked key above all, is refused. A key with
-// RevokedAt set is revoked whatever its State says.
+// RevokedAt set is revoked whatever its State says. The write is
+// version-checked like RevokeKey's, so a key that changed after the read is
+// refused with ErrKeyConflict.
 func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
@@ -407,16 +419,19 @@ func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
 	if k.State != key.StateActive || k.RevokedAt != nil {
 		return ErrInvalidStateTransition
 	}
-	if err := e.store.Keys().UpdateState(ctx, keyID, key.StateSuspended); err != nil {
+	k.State = key.StateSuspended
+	k.UpdatedAt = time.Now()
+	if err := e.store.Keys().UpdateIfVersion(ctx, k, k.Version); err != nil {
 		return fmt.Errorf("suspend key: %w", err)
 	}
-	k.State = key.StateSuspended
 	_ = e.hooks.FireKeySuspended(ctx, k)
 	return nil
 }
 
 // ReactivateKey re-enables a suspended key. A key with RevokedAt set is
-// revoked whatever its State says, and stays that way.
+// revoked whatever its State says, and stays that way. The write is
+// version-checked like RevokeKey's, so a key that changed after the read is
+// refused with ErrKeyConflict.
 func (e *Engine) ReactivateKey(ctx context.Context, keyID id.KeyID) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
@@ -425,7 +440,9 @@ func (e *Engine) ReactivateKey(ctx context.Context, keyID id.KeyID) error {
 	if k.State != key.StateSuspended || k.RevokedAt != nil {
 		return ErrInvalidStateTransition
 	}
-	if err := e.store.Keys().UpdateState(ctx, keyID, key.StateActive); err != nil {
+	k.State = key.StateActive
+	k.UpdatedAt = time.Now()
+	if err := e.store.Keys().UpdateIfVersion(ctx, k, k.Version); err != nil {
 		return fmt.Errorf("reactivate key: %w", err)
 	}
 	_ = e.hooks.FireKeyReactivated(ctx, k)

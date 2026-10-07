@@ -10,7 +10,9 @@ import (
 	"github.com/xraph/grove/drivers/mongodriver"
 
 	"github.com/xraph/keysmith/id"
+	"github.com/xraph/keysmith/internal/groveset"
 	"github.com/xraph/keysmith/key"
+	"github.com/xraph/keysmith/store"
 )
 
 type keyStore struct {
@@ -68,10 +70,21 @@ func (s *keyStore) GetByPrefix(ctx context.Context, prefix, hint string) (*key.K
 	return keyFromModel(&m)
 }
 
+// Update sets every field the model holds, as a model-based update would,
+// except version, which it counts up with $inc in the same update. A
+// model-based update builds only $set, so groveset lists the fields.
 func (s *keyStore) Update(ctx context.Context, k *key.Key) error {
-	m := keyToModel(k)
-	res, err := s.mdb.NewUpdate(m).
-		Filter(bson.M{"_id": m.ID}).
+	cols, err := groveset.Columns(keyToModel(k), "version")
+	if err != nil {
+		return fmt.Errorf("keysmith/mongo: update key: %w", err)
+	}
+	set := make(bson.M, len(cols))
+	for _, c := range cols {
+		set[c.Name] = c.Value
+	}
+	res, err := s.mdb.NewUpdate((*keyModel)(nil)).
+		Filter(bson.M{"_id": k.ID.String()}).
+		SetUpdate(bson.M{"$set": set, "$inc": bson.M{"version": int64(1)}}).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("keysmith/mongo: update key: %w", err)
@@ -82,11 +95,58 @@ func (s *keyStore) Update(ctx context.Context, k *key.Key) error {
 	return nil
 }
 
+func (s *keyStore) UpdateIfVersion(ctx context.Context, k *key.Key, version int64) error {
+	m := keyToModel(k)
+	m.Version = version + 1
+	res, err := s.mdb.NewUpdate(m).
+		Filter(versionFilter(m.ID, version)).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("keysmith/mongo: update key: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return s.missingOrConflict(ctx, k.ID)
+	}
+	k.Version = version + 1
+	return nil
+}
+
+// versionFilter matches the key stored at version. A document written before
+// the version field existed has none and reads back as version 0, so version
+// 0 matches a missing field too. The key_version migration fills the field
+// in, but Store.Migrate only builds indexes and never runs it.
+func versionFilter(keyID string, version int64) bson.M {
+	if version == 0 {
+		return bson.M{"_id": keyID, "$or": bson.A{
+			bson.M{"version": int64(0)},
+			bson.M{"version": bson.M{"$exists": false}},
+		}}
+	}
+	return bson.M{"_id": keyID, "version": version}
+}
+
+// missingOrConflict tells a version-checked update that matched nothing
+// apart: the key is gone, or it is there at another version.
+func (s *keyStore) missingOrConflict(ctx context.Context, keyID id.KeyID) error {
+	n, err := s.mdb.NewFind((*keyModel)(nil)).
+		Filter(bson.M{"_id": keyID.String()}).
+		Count(ctx)
+	if err != nil {
+		return fmt.Errorf("keysmith/mongo: look up key after a refused update: %w", err)
+	}
+	if n == 0 {
+		return errNotFound("key")
+	}
+	return store.ErrKeyConflict
+}
+
 func (s *keyStore) UpdateState(ctx context.Context, keyID id.KeyID, state key.State) error {
 	res, err := s.mdb.NewUpdate((*keyModel)(nil)).
 		Filter(bson.M{"_id": keyID.String()}).
-		Set("state", string(state)).
-		Set("updated_at", now()).
+		SetUpdate(bson.M{
+			"$set": bson.M{"state": string(state), "updated_at": now()},
+			"$inc": bson.M{"version": int64(1)},
+		}).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("keysmith/mongo: update key state: %w", err)

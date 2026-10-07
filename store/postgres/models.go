@@ -38,6 +38,7 @@ type keyModel struct {
 	RevokedAt       *time.Time     `grove:"revoked_at"`
 	CreatedAt       time.Time      `grove:"created_at,notnull"`
 	UpdatedAt       time.Time      `grove:"updated_at,notnull"`
+	Version         int64          `grove:"version,notnull"`
 }
 
 func keyToModel(k *key.Key) *keyModel {
@@ -60,6 +61,7 @@ func keyToModel(k *key.Key) *keyModel {
 		RevokedAt:   k.RevokedAt,
 		CreatedAt:   k.CreatedAt,
 		UpdatedAt:   k.UpdatedAt,
+		Version:     k.Version,
 	}
 	if k.PolicyID != nil {
 		s := k.PolicyID.String()
@@ -92,6 +94,7 @@ func keyFromModel(m *keyModel) (*key.Key, error) {
 		RevokedAt:   m.RevokedAt,
 		CreatedAt:   m.CreatedAt,
 		UpdatedAt:   m.UpdatedAt,
+		Version:     m.Version,
 	}
 	if m.PolicyID != nil {
 		pid, err := id.ParsePolicyID(*m.PolicyID)

@@ -341,6 +341,34 @@ func init() {
 				return nil
 			},
 		},
+		// The write counter version-checked key updates compare. Keys
+		// written before it existed start at 0. The store reads a missing
+		// field as 0 and its version filter matches one, so a database that
+		// only ever ran Store.Migrate works without this.
+		&migrate.Migration{
+			Name:    "add_keysmith_keys_version",
+			Version: "20261007000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				_, err := mexec.DB().Collection(colKeys).UpdateMany(ctx,
+					bson.M{"version": bson.M{"$exists": false}},
+					bson.M{"$set": bson.M{"version": int64(0)}},
+				)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				mexec, ok := exec.(*mongomigrate.Executor)
+				if !ok {
+					return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+				}
+				_, err := mexec.DB().Collection(colKeys).UpdateMany(ctx,
+					bson.M{}, bson.M{"$unset": bson.M{"version": ""}})
+				return err
+			},
+		},
 	)
 }
 

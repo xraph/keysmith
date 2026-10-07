@@ -67,6 +67,13 @@ type Key struct {
 	RevokedAt   *time.Time     `json:"revoked_at,omitempty" db:"revoked_at"`
 	CreatedAt   time.Time      `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at" db:"updated_at"`
+
+	// Version counts the writes to the stored row. It starts at 0, and
+	// Store.Update, Store.UpdateState and Store.UpdateIfVersion each add
+	// one. Store.UpdateLastUsed does not. A caller that wants to be told
+	// when the key changed under it passes the version it read to
+	// Store.UpdateIfVersion.
+	Version int64 `json:"version" db:"version"`
 }
 
 // CreateResult is returned from key creation. The RawKey is shown exactly once.

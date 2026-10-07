@@ -19,7 +19,9 @@ import (
 	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/keysmith/id"
+	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/rotation"
+	"github.com/xraph/keysmith/store"
 	"github.com/xraph/keysmith/usage"
 )
 
@@ -245,4 +247,49 @@ func TestStableSortIndexMigrationAddsAndDropsItsIndexes(t *testing.T) {
 	for _, col := range []string{colUsage, colRotations} {
 		assert.Subset(t, indexNames(t, s, col), want, col)
 	}
+}
+
+// Keys written before the version field existed have none. The store reads
+// them as version 0 and its version filter matches them, so a database that
+// only ever ran Store.Migrate works. The grove migration fills the field in.
+func TestKeysWithoutAVersion(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	legacy := func() *key.Key {
+		now := time.Now()
+		k := &key.Key{
+			ID: id.NewKeyID(), TenantID: "t1", AppID: "app", Name: "k", Prefix: "sk", Hint: "a3f8",
+			KeyHash: "hash-" + id.NewKeyID().String(), Environment: key.EnvLive, State: key.StateActive,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		require.NoError(t, s.Keys().Create(ctx, k))
+		_, err := s.mdb.Collection(colKeys).UpdateOne(ctx, bson.M{"_id": k.ID.String()}, bson.M{"$unset": bson.M{"version": ""}})
+		require.NoError(t, err)
+		return k
+	}
+	version := func(k *key.Key) bson.RawValue {
+		var raw bson.Raw
+		require.NoError(t, s.mdb.Collection(colKeys).FindOne(ctx, bson.M{"_id": k.ID.String()}).Decode(&raw))
+		return raw.Lookup("version")
+	}
+
+	checked := legacy()
+	got, err := s.Keys().Get(ctx, checked.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), got.Version)
+	got.Name = "renamed"
+	require.NoError(t, s.Keys().UpdateIfVersion(ctx, got, 0))
+	assert.Equal(t, int64(1), version(checked).Int64())
+	require.ErrorIs(t, s.Keys().UpdateIfVersion(ctx, got, 0), store.ErrKeyConflict)
+
+	plain := legacy()
+	require.NoError(t, s.Keys().Update(ctx, plain))
+	assert.Equal(t, int64(1), version(plain).Int64(), "$inc starts a missing version from 0")
+
+	untouched := legacy()
+	assert.Equal(t, bson.Type(0), version(untouched).Type, "the field is gone before the migration")
+	require.NoError(t, migrationByVersion(t, "20261007000001").Up(ctx, mongomigrate.New(s.mdb)))
+	assert.Equal(t, bson.TypeInt64, version(untouched).Type)
+	assert.Equal(t, int64(0), version(untouched).Int64())
+	assert.Equal(t, int64(1), version(checked).Int64(), "the migration leaves a counted version alone")
 }

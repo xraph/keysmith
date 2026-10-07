@@ -98,8 +98,9 @@ func TestRateLimiterConfigured(t *testing.T) {
 	assert.True(t, with.RateLimiterConfigured())
 }
 
-// A rotate or suspend racing a revoke can write an older row back over the
-// revoked one. Until updates are conditional, revoked_at is the authority:
+// The engine's own writes are version-checked now, but key.Store.Update and
+// UpdateState are not, and a caller writing keys directly can still put an
+// older state back over a revoked row. So revoked_at stays the authority:
 // once it is set, the key is dead whatever state says.
 func TestRevokedAtWinsOverAStaleState(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {

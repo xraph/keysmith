@@ -36,6 +36,7 @@ func TestMapStoreErrorStatuses(t *testing.T) {
 		{"scope has children", keysmith.ErrScopeHasChildren, http.StatusConflict},
 		{"scope allowed by policy", keysmith.ErrScopeAllowedByPolicy, http.StatusConflict},
 		{"invalid state transition", keysmith.ErrInvalidStateTransition, http.StatusConflict},
+		{"key conflict", keysmith.ErrKeyConflict, http.StatusConflict},
 		{"key not found", keysmith.ErrKeyNotFound, http.StatusNotFound},
 		{"policy not found", keysmith.ErrPolicyNotFound, http.StatusNotFound},
 		{"scope not found", keysmith.ErrScopeNotFound, http.StatusNotFound},

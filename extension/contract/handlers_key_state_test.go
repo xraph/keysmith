@@ -454,3 +454,57 @@ func TestKeysStateResponsesCarryNoSecret(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(string(raw)), "rawkey")
 	assert.NotContains(t, strings.ToLower(string(raw)), "hash")
 }
+
+// conflictKeys refuses every version-checked write, as a store does when
+// another write landed between the engine's read and its own.
+type conflictKeys struct{ key.Store }
+
+func (conflictKeys) UpdateIfVersion(context.Context, *key.Key, int64) error {
+	return store.ErrKeyConflict
+}
+
+// A key command whose write lost a race answers CONFLICT and asks the caller
+// to reload, and the key is left as the other write put it.
+func TestKeyCommandsThatLostARaceAskForAReload(t *testing.T) {
+	calls := map[string]func(Deps, id.KeyID) error{
+		"revoke": func(d Deps, kid id.KeyID) error {
+			_, err := keysRevokeHandler(d)(context.Background(), stateRevokeReq(kid, "r"), principal())
+			return err
+		},
+		"suspend": func(d Deps, kid id.KeyID) error {
+			_, err := keysSuspendHandler(d)(context.Background(), stateIDReq(kid), principal())
+			return err
+		},
+		"reactivate": func(d Deps, kid id.KeyID) error {
+			_, err := keysReactivateHandler(d)(context.Background(), stateIDReq(kid), principal())
+			return err
+		},
+		"rotate": func(d Deps, kid id.KeyID) error {
+			_, err := keysRotateHandler(d)(context.Background(), rotateReq(kid, "manual", nil), principal())
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			base := createMemoryStore()
+			_, eng := setup(t, base)
+			created := create(t, eng, "t1", nil)
+			if name == "reactivate" {
+				require.NoError(t, eng.SuspendKey(tctx("t1"), created.Key.ID))
+			}
+			before, err := eng.GetKey(tctx("t1"), created.Key.ID)
+			require.NoError(t, err)
+			wrapped, err := keysmith.NewEngine(keysmith.WithStore(stateRaceStore{Store: base, keys: conflictKeys{base.Keys()}}))
+			require.NoError(t, err)
+			deps := Deps{Engine: wrapped, DefaultTenantID: "t1"}
+
+			assert.Equal(t, "this key changed while you were acting on it. Reload and try again.",
+				stateConflictMessage(t, call(deps, created.Key.ID)))
+			after, err := eng.GetKey(tctx("t1"), created.Key.ID)
+			require.NoError(t, err)
+			assert.Equal(t, before.State, after.State)
+			assert.Equal(t, before.KeyHash, after.KeyHash)
+			assert.Equal(t, before.Version, after.Version)
+		})
+	}
+}

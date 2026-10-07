@@ -58,6 +58,11 @@ var (
 	// ErrKeyNotFound is returned when a key cannot be found.
 	ErrKeyNotFound = store.ErrKeyNotFound
 
+	// ErrKeyConflict is returned when a key write lost a race: the key
+	// changed between the engine reading it and writing it back, so the
+	// write was refused rather than putting an older row over the newer one.
+	ErrKeyConflict = store.ErrKeyConflict
+
 	// ErrScopeNotFound is returned when a scope cannot be found.
 	ErrScopeNotFound = store.ErrScopeNotFound
 

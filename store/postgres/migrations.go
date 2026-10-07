@@ -257,8 +257,25 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_usage_agg_tenant ON keysmith_usage_agg (
 			// restore.
 			Down: func(context.Context, migrate.Executor) error { return nil },
 		},
+		&migrate.Migration{
+			Name:    "key_version",
+			Version: "20261007000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, keyVersionSQL)
+				return err
+			},
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				_, err := exec.Exec(ctx, `ALTER TABLE keysmith_keys DROP COLUMN IF EXISTS version`)
+				return err
+			},
+		},
 	)
 }
+
+// keyVersionSQL adds the write counter that version-checked key updates
+// compare. Existing keys start at 0. It runs from both the grove migration
+// group and migrationSQL, so keep them in step.
+const keyVersionSQL = `ALTER TABLE keysmith_keys ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0`
 
 // closeLegacyGraceSQL closes the grace windows of rotations recorded before
 // the grace fix. RotateKey then recorded a window on every rotation but
@@ -423,4 +440,7 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_grace ON keysmith_rotations (g
 
 	// 008 close legacy grace windows (same SQL as the grove migration)
 	closeLegacyGraceSQL,
+
+	// 009 key version (same SQL as the grove migration)
+	keyVersionSQL,
 }
