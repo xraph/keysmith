@@ -8,9 +8,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +21,8 @@ import (
 	"github.com/xraph/grove/drivers/pgdriver"
 	"github.com/xraph/grove/drivers/sqlitedriver"
 
+	"github.com/xraph/keysmith/id"
+	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/store"
 	"github.com/xraph/keysmith/store/memory"
 	mongostore "github.com/xraph/keysmith/store/mongo"
@@ -34,7 +38,7 @@ type backend struct {
 func backends() []backend {
 	bs := []backend{
 		{"memory", func(*testing.T) store.Store { return memory.New() }},
-		{"sqlite", openSQLite},
+		{"sqlite", OpenSQLite},
 	}
 	if dsn := os.Getenv("KEYSMITH_TEST_PG_DSN"); dsn != "" {
 		bs = append(bs, backend{"postgres", func(t *testing.T) store.Store { return openPostgres(t, dsn) }})
@@ -89,18 +93,78 @@ func replaceDB(t *testing.T, dsn, name string) string {
 	return u.String()
 }
 
-func openSQLite(t *testing.T) store.Store {
+// OpenSQLite opens an unmigrated sqlite store in a fresh temporary
+// directory, with the DSN the store documents.
+//
+// The engine's ValidateKey writes last_used_at from a goroutine nobody
+// waits for, and on sqlite that write can still be waiting for the write
+// lock when the test ends. If it outlives the cleanup it reopens the WAL
+// files after the directory is emptied, and the temporary directory fails to
+// remove. So the store this returns counts those writes, and the cleanup
+// refuses new ones and waits for the rest before it closes the database.
+func OpenSQLite(t *testing.T) store.Store {
 	t.Helper()
 	sdb := sqlitedriver.New()
-	if err := sdb.Open(context.Background(), filepath.Join(t.TempDir(), "keysmith.db")); err != nil {
+	if err := sdb.Open(context.Background(), sqlitestore.DSN(filepath.Join(t.TempDir(), "keysmith.db"))); err != nil {
 		t.Fatalf("sqlite open: %v", err)
 	}
 	db, err := grove.Open(sdb)
 	if err != nil {
 		t.Fatalf("grove open: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	return sqlitestore.New(db)
+	g := &lastUsedGate{}
+	t.Cleanup(func() {
+		g.close()
+		_ = db.Close()
+	})
+	return gatedStore{Store: sqlitestore.New(db), gate: g}
+}
+
+var errStoreClosed = errors.New("storetest: store closed")
+
+// lastUsedGate tracks UpdateLastUsed calls in flight. Once closed it turns
+// new calls away, so none can start after close has waited for the rest.
+type lastUsedGate struct {
+	mu     sync.Mutex
+	closed bool
+	wg     sync.WaitGroup
+}
+
+func (g *lastUsedGate) enter() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed {
+		return false
+	}
+	g.wg.Add(1)
+	return true
+}
+
+func (g *lastUsedGate) close() {
+	g.mu.Lock()
+	g.closed = true
+	g.mu.Unlock()
+	g.wg.Wait()
+}
+
+type gatedStore struct {
+	store.Store
+	gate *lastUsedGate
+}
+
+func (s gatedStore) Keys() key.Store { return gatedKeys{Store: s.Store.Keys(), gate: s.gate} }
+
+type gatedKeys struct {
+	key.Store
+	gate *lastUsedGate
+}
+
+func (k gatedKeys) UpdateLastUsed(ctx context.Context, keyID id.KeyID, at time.Time) error {
+	if !k.gate.enter() {
+		return errStoreClosed
+	}
+	defer k.gate.wg.Done()
+	return k.Store.UpdateLastUsed(ctx, keyID, at)
 }
 
 // openPostgres creates a throwaway database per test, so tests never share

@@ -21,7 +21,7 @@ import (
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	sdb := sqlitedriver.New()
-	require.NoError(t, sdb.Open(context.Background(), filepath.Join(t.TempDir(), "keysmith.db")))
+	require.NoError(t, sdb.Open(context.Background(), DSN(filepath.Join(t.TempDir(), "keysmith.db"))))
 	db, err := grove.Open(sdb)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
