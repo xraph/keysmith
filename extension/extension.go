@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	log "github.com/xraph/go-utils/log"
 
@@ -107,14 +108,14 @@ func (e *Extension) init(fapp forge.App) error {
 		if err != nil {
 			return fmt.Errorf("keysmith: %w", err)
 		}
-		s, err := e.buildStoreFromGroveDB(groveDB)
+		s, err := e.buildStoreFromGroveDB(context.Background(), groveDB, logger)
 		if err != nil {
 			return err
 		}
 		e.keysmithOpts = append(e.keysmithOpts, keysmith.WithStore(s))
 	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
 		// Auto-discover default grove.DB from container (matches authsome/cortex pattern).
-		s, err := e.buildStoreFromGroveDB(db)
+		s, err := e.buildStoreFromGroveDB(context.Background(), db, logger)
 		if err != nil {
 			return err
 		}
@@ -361,16 +362,36 @@ func (e *Extension) resolveGroveDB(fapp forge.App) (*grove.DB, error) {
 
 // buildStoreFromGroveDB constructs the appropriate store backend
 // based on the grove driver type (pg, sqlite, mongo).
-func (e *Extension) buildStoreFromGroveDB(db *grove.DB) (store.Store, error) {
+func (e *Extension) buildStoreFromGroveDB(ctx context.Context, db *grove.DB, logger log.Logger) (store.Store, error) {
 	driverName := db.Driver().Name()
 	switch driverName {
 	case "pg":
 		return pgstore.New(pgdriver.Unwrap(db)), nil
 	case "sqlite":
-		return sqlitestore.New(db), nil
+		s := sqlitestore.New(db)
+		warnWithoutSQLiteSettings(ctx, s, logger)
+		return s, nil
 	case "mongo":
 		return mongostore.New(db), nil
 	default:
 		return nil, fmt.Errorf("keysmith: unsupported grove driver %q", driverName)
+	}
+}
+
+// warnWithoutSQLiteSettings logs a warning when the sqlite database keysmith
+// was handed has no busy timeout, which means it wasn't opened with
+// sqlite.DSN. Startup carries on: the store works, but a write can fail with
+// SQLITE_BUSY while another holds the lock, and ON DELETE CASCADE runs only
+// on the one connection grove turned foreign keys on for.
+func warnWithoutSQLiteSettings(ctx context.Context, s *sqlitestore.Store, logger log.Logger) {
+	settings := strings.TrimPrefix(sqlitestore.DSN(""), "?")
+	d, err := s.BusyTimeout(ctx)
+	if err != nil {
+		logger.Warn("keysmith: could not read the sqlite busy timeout; open the database with sqlite.DSN or add "+settings+" to its DSN",
+			forge.F("error", err.Error()))
+		return
+	}
+	if d == 0 {
+		logger.Warn("keysmith: the sqlite database has no busy timeout, so writes can fail with SQLITE_BUSY and ON DELETE CASCADE can be skipped; open it with sqlite.DSN or add " + settings + " to its DSN")
 	}
 }

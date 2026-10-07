@@ -1,7 +1,9 @@
 package sqlite
 
 import (
+	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -33,13 +35,51 @@ const BusyTimeout = 5 * time.Second
 //     Read-only transactions still begin deferred.
 //
 // path is a file name or a file: URI. Query parameters already on it are
-// kept. If you open the database some other way, such as from a grove
-// extension's config, put the same three parameters on that DSN.
+// kept, and so is any of the three settings it already sets: the caller's
+// _txlock, busy_timeout or foreign_keys wins, and DSN adds only the ones
+// that are missing. If you open the database some other way, such as from
+// a grove extension's config, put the same three parameters on that DSN.
 func DSN(path string) string {
+	var hasTxLock, hasBusy, hasFK bool
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		// A query that doesn't parse is left for modernc to reject at Open.
+		q, _ := url.ParseQuery(path[i+1:])
+		_, hasTxLock = q["_txlock"]
+		for _, p := range q["_pragma"] {
+			p = strings.ToLower(strings.TrimSpace(p))
+			hasBusy = hasBusy || strings.HasPrefix(p, "busy_timeout")
+			hasFK = hasFK || strings.HasPrefix(p, "foreign_keys")
+		}
+	}
+
+	var add []string
+	if !hasBusy {
+		add = append(add, fmt.Sprintf("_pragma=busy_timeout(%d)", BusyTimeout.Milliseconds()))
+	}
+	if !hasFK {
+		add = append(add, "_pragma=foreign_keys(1)")
+	}
+	if !hasTxLock {
+		add = append(add, "_txlock=immediate")
+	}
+	if len(add) == 0 {
+		return path
+	}
 	sep := "?"
 	if strings.Contains(path, "?") {
 		sep = "&"
 	}
-	return fmt.Sprintf("%s%s_pragma=busy_timeout(%d)&_pragma=foreign_keys(1)&_txlock=immediate",
-		path, sep, BusyTimeout.Milliseconds())
+	return path + sep + strings.Join(add, "&")
+}
+
+// BusyTimeout reads PRAGMA busy_timeout on one pooled connection. Grove's
+// driver never sets a busy timeout, so zero means the DSN didn't set one
+// either, and then no connection in the pool has it. The extension reads it
+// at startup to warn about a database opened without DSN.
+func (s *Store) BusyTimeout(ctx context.Context) (time.Duration, error) {
+	var ms int64
+	if err := s.sdb.NewRaw("PRAGMA busy_timeout").Scan(ctx, &ms); err != nil {
+		return 0, fmt.Errorf("keysmith/sqlite: read busy_timeout: %w", err)
+	}
+	return time.Duration(ms) * time.Millisecond, nil
 }

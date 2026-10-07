@@ -3,7 +3,9 @@ package sqlite_test
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/xraph/keysmith"
@@ -47,4 +49,14 @@ func TestWritesRightAfterValidateNeverHitBusy(t *testing.T) {
 		require.NoError(t, gErr, "iteration %d: end grace", i)
 		raw = rotated.RawKey
 	}
+
+	// The background writes land too: the key carries a recent last-used
+	// time once they finish.
+	require.Eventually(t, func() bool {
+		k, gErr := eng.GetKey(ctx, keyID)
+		return gErr == nil && k.LastUsedAt != nil
+	}, 5*time.Second, 10*time.Millisecond, "last_used_at never written")
+	k, err := eng.GetKey(ctx, keyID)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now(), *k.LastUsedAt, time.Minute)
 }

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,4 +46,30 @@ func TestDSNKeepsTheQueryAlreadyOnThePath(t *testing.T) {
 	const settings = "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
 	assert.Equal(t, "keysmith.db?"+settings, DSN("keysmith.db"))
 	assert.Equal(t, "file:keysmith.db?mode=rwc&"+settings, DSN("file:keysmith.db?mode=rwc"))
+}
+
+// A setting the caller already put on the path wins, and DSN adds only the
+// ones that are missing.
+func TestDSNLeavesTheCallersOwnSettingsAlone(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"k.db?_txlock=deferred", "k.db?_txlock=deferred&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"},
+		{"k.db?_pragma=busy_timeout(100)&_pragma=foreign_keys(0)", "k.db?_pragma=busy_timeout(100)&_pragma=foreign_keys(0)&_txlock=immediate"},
+		{"file:k.db?_pragma=Busy_Timeout=100", "file:k.db?_pragma=Busy_Timeout=100&_pragma=foreign_keys(1)&_txlock=immediate"},
+		{"k.db?_pragma=busy_timeout(1)&_pragma=foreign_keys(1)&_txlock=exclusive", "k.db?_pragma=busy_timeout(1)&_pragma=foreign_keys(1)&_txlock=exclusive"},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, DSN(c.in), c.in)
+	}
+}
+
+func TestDSNKeepsTheCallersBusyTimeoutOnTheConnection(t *testing.T) {
+	ctx := context.Background()
+	sdb := sqlitedriver.New()
+	require.NoError(t, sdb.Open(ctx, DSN(filepath.Join(t.TempDir(), "keysmith.db")+"?_pragma=busy_timeout(100)")))
+	t.Cleanup(func() { _ = sdb.Close() })
+	var busy, fk int
+	require.NoError(t, sdb.NewRaw("PRAGMA busy_timeout").Scan(ctx, &busy))
+	require.NoError(t, sdb.NewRaw("PRAGMA foreign_keys").Scan(ctx, &fk))
+	assert.Equal(t, 100, busy)
+	assert.Equal(t, 1, fk)
 }
