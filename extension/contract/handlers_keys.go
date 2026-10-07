@@ -87,7 +87,7 @@ func scopeNames(ctx context.Context, eng *keysmith.Engine, keyID id.KeyID) ([]st
 
 func keysListHandler(deps Deps) func(context.Context, keysListRequest, dashcontract.Principal) (keysListResponse, error) {
 	return func(ctx context.Context, in keysListRequest, p dashcontract.Principal) (keysListResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return keysListResponse{}, err
 		}
@@ -144,7 +144,7 @@ func keysListHandler(deps Deps) func(context.Context, keysListRequest, dashcontr
 
 func keysDetailHandler(deps Deps) func(context.Context, keysDetailRequest, dashcontract.Principal) (keysDetailResponse, error) {
 	return func(ctx context.Context, in keysDetailRequest, p dashcontract.Principal) (keysDetailResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return keysDetailResponse{}, err
 		}

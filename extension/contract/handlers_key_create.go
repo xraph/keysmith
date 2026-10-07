@@ -97,7 +97,7 @@ func (d Deps) mapCreateError(intent string, err error) error {
 func keysCreateHandler(deps Deps) func(context.Context, keysCreateRequest, dashcontract.Principal) (keyWithSecretResponse, error) {
 	return func(ctx context.Context, in keysCreateRequest, p dashcontract.Principal) (keyWithSecretResponse, error) {
 		const intent = "keys.create"
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return keyWithSecretResponse{}, err
 		}

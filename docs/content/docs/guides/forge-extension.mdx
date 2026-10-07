@@ -131,7 +131,9 @@ The extension resolves its store in this order:
 
 Keysmith's dashboard is the React package `@forge-go/dashboard-plugin-keysmith`. It lives in the forge-dashboard repository under `packages/plugin-keysmith`, and you run it in forge's dashboard extension with the React shell. The only way it reaches keysmith is the contract contributor the extension registers in `Extension.RegisterContractContributor`. There is no Go-rendered dashboard any more, so if you're upgrading from the templ one, read [MIGRATION.md](https://github.com/xraph/keysmith/blob/main/MIGRATION.md) before you bump.
 
-You have to tell the dashboard which tenant it works in. Pass it when you build the extension:
+Under an auth extension that puts the session's org on the request, the dashboard shows that org. Authsome does this: its middleware sets a `forge.Scope` for the session's active org, and every page then shows that org's keys, policies, scopes and usage, the same tenant the engine already writes under. You don't configure anything for it.
+
+`tenant_id` is the fallback for sessions without an org, and for hosts whose auth sets no Scope at all. Pass it when you build the extension:
 
 ```go
 ext := extension.New(
@@ -149,9 +151,15 @@ extensions:
       app_id: billing   # optional
 ```
 
-Without a tenant, every dashboard request answers `PERMISSION_DENIED`, and the message names `extensions.keysmith.dashboard.tenant_id`. (A request with no signed-in user stops earlier, at `UNAUTHENTICATED`.) Keysmith won't fall back to an empty tenant, because an empty tenant in a store filter matches every tenant's rows.
+The contract handlers try three places, in this order:
 
-The contract handlers look for a `tenant_id` claim on the request's principal first and use this setting when there isn't one. No auth provider sets that claim today, so on every current deployment the setting is what scopes the dashboard, and every page shows that one tenant. The handlers don't take the tenant from `forge.Scope` the way the engine does, so a host that puts its own org on the request still gets the configured tenant.
+1. A `tenant_id` claim on the request's principal. No auth provider sets one today. A claim that's there but empty, or not a string, refuses on the spot and never falls through.
+2. The org of the `forge.Scope` on the request. A Scope with no org (an app-only session) says nothing about the tenant, so the handlers move on.
+3. `extensions.keysmith.dashboard.tenant_id`.
+
+When none of them answers, the request gets `PERMISSION_DENIED`, and the message names `extensions.keysmith.dashboard.tenant_id`. (A request with no signed-in user stops earlier, at `UNAUTHENTICATED`.) Keysmith won't fall back to an empty tenant, because an empty tenant in a store filter matches every tenant's rows. The settings intent tells you which source it used: its `tenantSource` is `claim`, `scope` or `config`.
+
+So on a deployment whose sessions carry orgs, a user with an active org sees that org's rows even when `tenant_id` is set, and the configured tenant only shows for sessions without one.
 
 `app_id` can stay empty. It only labels the rows the dashboard creates, and keysmith never filters a read by app.
 
@@ -170,7 +178,7 @@ When YAML and `WithDashboardTenant` both set a field, YAML wins. Each field is m
 | `WithBasePath(path)` | `string` | `""` | URL prefix for keysmith routes |
 | `WithGroveDatabase(name)` | `string` | `""` | Named grove.DB to resolve from DI |
 | `WithRequireConfig(b)` | `bool` | `false` | Require config in YAML files |
-| `WithDashboardTenant(tenantID, appID)` | `string, string` | `"", ""` | Tenant the dashboard works in, and an optional app that labels rows it creates. A YAML value wins |
+| `WithDashboardTenant(tenantID, appID)` | `string, string` | `"", ""` | Tenant the dashboard uses for a session with no org, and an optional app that labels rows it creates. A YAML value wins |
 
 ## File-based configuration (YAML)
 
@@ -202,7 +210,7 @@ extensions:
 | `disable_migrate` | `bool` | `false` | Skip migrations on Start |
 | `base_path` | `string` | `""` | URL prefix for all routes |
 | `grove_database` | `string` | `""` | Named grove.DB from DI |
-| `dashboard.tenant_id` | `string` | `""` | Tenant the dashboard works in. Leave it empty and every dashboard request answers `PERMISSION_DENIED` |
+| `dashboard.tenant_id` | `string` | `""` | Tenant the dashboard uses for a session with no org. Leave it empty and those requests answer `PERMISSION_DENIED` |
 | `dashboard.app_id` | `string` | `""` | Labels rows the dashboard creates. Optional, and never filters a read |
 
 ### Merge behaviour

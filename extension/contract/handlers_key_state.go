@@ -60,7 +60,7 @@ func keyStateChange(
 	validate func() error,
 	mapErr func(intent string, err error) error,
 ) (keyResponse, error) {
-	tenant, err := tenantFrom(p, deps)
+	tenant, err := tenantFrom(ctx, p, deps)
 	if err != nil {
 		return keyResponse{}, err
 	}

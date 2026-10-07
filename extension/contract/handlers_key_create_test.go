@@ -408,8 +408,8 @@ func TestKeysCreateMapsAPolicyDeletedMidFlightLikeAMissingOne(t *testing.T) {
 }
 
 // The engine reads the tenant from the context, and it prefers a forge Scope
-// over keysmith.WithTenant. A host that sets a forge Scope on every request
-// (authsome's dashboard bridge does) must not decide where a key lands: the
+// over keysmith.WithTenant. A tenant_id claim beats the Scope in tenantFrom,
+// so when the two disagree the Scope must not decide where a key lands: the
 // contract resolved the tenant, so the key goes there and the contract's own
 // reads find it.
 func TestKeysCreateUsesTheContractTenantWhateverForgeScopeTheRequestCarries(t *testing.T) {

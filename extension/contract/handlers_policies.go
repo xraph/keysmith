@@ -49,7 +49,7 @@ func policyKeyCounts(ctx context.Context, deps Deps, tenant string, polID id.Pol
 func policiesDetailHandler(deps Deps) func(context.Context, policyIDRequest, dashcontract.Principal) (policiesDetailResponse, error) {
 	return func(ctx context.Context, in policyIDRequest, p dashcontract.Principal) (policiesDetailResponse, error) {
 		const intent = "policies.detail"
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return policiesDetailResponse{}, err
 		}

@@ -36,16 +36,6 @@ func requireUser(p dashcontract.Principal) (string, error) {
 //
 // READ THIS BEFORE CHANGING IT. It is the most dangerous function here.
 //
-// Do not read the tenant from the request context. The Go-rendered
-// dashboard this package replaced handed the engine the request context
-// as it came, and carrying that habit over would be wrong, because what
-// the context holds is not ours to trust: keysmith itself puts nothing
-// there on the contract path, so a bare host leaves it empty, while a host
-// such as authsome's dashboard bridge sets a forge Scope for the session's
-// own org and app. Neither is the tenant this function resolves. Once a
-// handler has the tenant from here, it hands the engine engineCtx, which
-// overrides whatever the request carried.
-//
 // The empty string is not a harmless zero. An empty TenantID in a store
 // filter matches EVERY tenant's rows rather than none, so a handler that
 // resolved "" would serve every tenant's keys, policies, scopes, rotations
@@ -57,33 +47,48 @@ func requireUser(p dashcontract.Principal) (string, error) {
 //
 // Resolution order:
 //  0. A signed-in user, or refuse with UNAUTHENTICATED.
-//  1. The principal's tenant_id claim, the canonical per-request surface.
-//  2. Deps.DefaultTenantID, for single-tenant deployments that configure it.
-//  3. Refuse with PERMISSION_DENIED.
+//  1. The principal's tenant_id claim. A claim that is present but
+//     unusable refuses here and never falls through.
+//  2. The org of the forge Scope on ctx, when the Scope names one.
+//  3. Deps.DefaultTenantID, for deployments that configure it.
+//  4. Refuse with PERMISSION_DENIED.
+//
+// Step 2 is how the dashboard agrees with the engine. The engine takes the
+// tenant from the forge Scope's org (scopeFromContext in keysmith's
+// scope.go), and under authsome that Scope is the session's org: its auth
+// middleware puts forge.NewOrgScope(app, org) on every request whose
+// session has an active org. We trust it because the host sets it, server
+// side, from the session it has just authenticated. Nothing the browser
+// sends reaches it: the dashboard transport hands the dispatcher the HTTP
+// request's own context, and the request body cannot write a context value.
+// Read anything else from ctx and that argument stops holding, so don't.
+//
+// A Scope with an empty org (an app-only session, or a host that sets
+// forge.NewAppScope) falls through to step 3. Reading its OrgID as the
+// tenant would hand the stores "" and show every tenant's rows, and the
+// engine would read the same "" for a write. An app-only session therefore
+// gets the configured tenant, or a refusal when none is configured.
 //
 // Step 1 returns nothing today: the auth provider builds dashauth.UserInfo
 // and sets no claims, so Principal.Claims is empty on every request. The
-// claim read is here because it is where the tenant belongs once a tenant
-// selector exists, and because reading it costs nothing. Until then a
-// multi-tenant deployment either configures DefaultTenantID or gets
-// refusals, which is the right behaviour for a dashboard that cannot tell
-// which tenant it is looking at.
-func tenantFrom(p dashcontract.Principal, deps Deps) (string, error) {
-	// Identity comes first. DefaultTenantID exists so a single-tenant
-	// deployment can answer without a tenant claim, not so a request with
-	// no user at all can be served under that tenant.
+// claim read stays first because a claim is the one thing that names a
+// tenant for this request on purpose, and because reading it costs nothing.
+func tenantFrom(ctx context.Context, p dashcontract.Principal, deps Deps) (string, error) {
+	// Identity comes first. Neither the Scope nor DefaultTenantID exists so
+	// a request with no user at all can be served under a tenant.
 	if _, err := requireUser(p); err != nil {
 		return "", err
 	}
 	// A claim that is PRESENT but unusable is not the same as no claim, and
 	// the difference decides whether the fallback is safe.
 	//
-	// No claim at all means nothing has been said about the tenant, so a
-	// configured default is a reasonable answer. A claim that is present
-	// and does not resolve means something tried to say which tenant this
-	// is and failed, and answering with a different tenant is how "empty
-	// matches everything" gets reintroduced by somebody following this
-	// function correctly. So a broken claim refuses.
+	// No claim at all means nothing has been said about the tenant, so the
+	// session's org or a configured default is a reasonable answer. A claim
+	// that is present and does not resolve means something tried to say
+	// which tenant this is and failed, and answering with a different tenant
+	// is how "empty matches everything" gets reintroduced by somebody
+	// following this function correctly. So a broken claim refuses, Scope or
+	// no Scope.
 	if raw, present := p.Claims[tenantClaim]; present {
 		s, ok := raw.(string)
 		if !ok || s == "" {
@@ -95,6 +100,9 @@ func tenantFrom(p dashcontract.Principal, deps Deps) (string, error) {
 		}
 		return s, nil
 	}
+	if org := scopeOrg(ctx); org != "" {
+		return org, nil
+	}
 	if deps.DefaultTenantID != "" {
 		return deps.DefaultTenantID, nil
 	}
@@ -105,14 +113,26 @@ func tenantFrom(p dashcontract.Principal, deps Deps) (string, error) {
 	}
 }
 
+// scopeOrg is the org of the forge Scope on ctx, or "" when ctx carries no
+// Scope or an app-only one. Callers treat "" as "the Scope said nothing".
+func scopeOrg(ctx context.Context) string {
+	if sc, ok := forge.ScopeFrom(ctx); ok {
+		return sc.OrgID()
+	}
+	return ""
+}
+
 // tenantSourceOf says where tenantFrom took the tenant from: "claim" when
-// the principal carries a tenant_id claim, "config" when it fell back to
-// Deps.DefaultTenantID. Call it only after tenantFrom has answered: a claim
-// that is present but unusable refuses there, so here a present claim is a
-// claim tenantFrom used.
-func tenantSourceOf(p dashcontract.Principal, _ Deps) string {
+// the principal carries a tenant_id claim, "scope" when the forge Scope on
+// ctx names an org, and "config" when it fell back to Deps.DefaultTenantID.
+// Call it only after tenantFrom has answered: a claim that is present but
+// unusable refuses there, so here a present claim is a claim tenantFrom used.
+func tenantSourceOf(ctx context.Context, p dashcontract.Principal, _ Deps) string {
 	if _, present := p.Claims[tenantClaim]; present {
 		return "claim"
+	}
+	if scopeOrg(ctx) != "" {
+		return "scope"
 	}
 	return "config"
 }
@@ -142,11 +162,12 @@ func appFrom(p dashcontract.Principal, deps Deps) (string, error) {
 // stamps a tenant on what it creates. The engine reads the tenant from the
 // context and prefers a forge Scope over keysmith.WithTenant, so setting
 // only WithTenant loses to any Scope the host put on the request (authsome's
-// dashboard bridge sets one for the session's org on every request). The key
-// would then be checked against this tenant's policy and scopes, stored
-// under another, and never shown in this tenant's list. Setting both, to the
-// tenant and app the contract resolved, means the engine reads the same
-// answer whichever it looks at.
+// middleware sets one on every signed-in request). When the contract took
+// its tenant from a claim or from config, that Scope can name another org,
+// or none. The key would then be checked against this tenant's policy and
+// scopes, stored under another, and never shown in this tenant's list.
+// Setting both, to the tenant and app the contract resolved, means the
+// engine reads the same answer whichever it looks at.
 //
 // An empty app still gets an org scope: keysmith never filters by app, and
 // an org-level Scope is what makes the engine take the tenant from it.

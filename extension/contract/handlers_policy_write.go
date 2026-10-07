@@ -298,7 +298,7 @@ func policiesCreateHandler(deps Deps) func(context.Context, policyFields, dashco
 		if _, err := requireUser(p); err != nil {
 			return policyResponse{}, err
 		}
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return policyResponse{}, err
 		}
@@ -327,7 +327,7 @@ func policiesUpdateHandler(deps Deps) func(context.Context, policiesUpdateReques
 		if _, err := requireUser(p); err != nil {
 			return policyResponse{}, err
 		}
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return policyResponse{}, err
 		}
@@ -374,7 +374,7 @@ func policiesDeleteHandler(deps Deps) func(context.Context, policyIDRequest, das
 		if _, err := requireUser(p); err != nil {
 			return policiesDeleteResponse{}, err
 		}
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return policiesDeleteResponse{}, err
 		}

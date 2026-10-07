@@ -29,10 +29,10 @@ type Config struct {
 
 // DashboardConfig scopes the dashboard contract handlers to a tenant.
 type DashboardConfig struct {
-	// TenantID is the tenant every dashboard request is scoped to when the
-	// principal carries no tenant claim, which today is every request. Leave
-	// it empty on a multi-tenant deployment and the dashboard refuses rather
-	// than guessing.
+	// TenantID is the tenant a dashboard request is scoped to when it carries
+	// no tenant claim and no session org (the forge Scope an auth extension
+	// such as authsome sets). Leave it empty and those requests refuse, so
+	// the dashboard never guesses.
 	TenantID string `json:"tenant_id" mapstructure:"tenant_id" yaml:"tenant_id"`
 
 	// AppID labels rows the dashboard creates when the principal carries no

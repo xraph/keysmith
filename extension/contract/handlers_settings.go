@@ -34,13 +34,16 @@ type settingsResponse struct {
 	StoreHealthy bool     `json:"storeHealthy"`
 	// StoreMessage is one of two fixed sentences. The driver's error never
 	// goes out; it is in the server log.
-	StoreMessage          string           `json:"storeMessage"`
-	RateLimiterConfigured bool             `json:"rateLimiterConfigured"`
-	TenantSource          string           `json:"tenantSource"` // "claim" or "config"
-	Tenant                string           `json:"tenant"`
-	Enforcement           []EnforcementRow `json:"enforcement"`
-	EnforcedFields        int              `json:"enforcedFields"`
-	DefaultGraceSeconds   int64            `json:"defaultGraceSeconds"`
+	StoreMessage          string `json:"storeMessage"`
+	RateLimiterConfigured bool   `json:"rateLimiterConfigured"`
+	// TenantSource says where the tenant came from: "claim" (the
+	// principal's tenant_id claim), "scope" (the org of the forge Scope the
+	// host's auth middleware set) or "config" (dashboard.tenant_id).
+	TenantSource        string           `json:"tenantSource"`
+	Tenant              string           `json:"tenant"`
+	Enforcement         []EnforcementRow `json:"enforcement"`
+	EnforcedFields      int              `json:"enforcedFields"`
+	DefaultGraceSeconds int64            `json:"defaultGraceSeconds"`
 }
 
 // settingsHandler answers the deployment's settings for the caller's
@@ -48,7 +51,7 @@ type settingsResponse struct {
 // says so, and the error goes to the server log with the intent.
 func settingsHandler(deps Deps) func(context.Context, settingsRequest, dashcontract.Principal) (settingsResponse, error) {
 	return func(ctx context.Context, _ settingsRequest, p dashcontract.Principal) (settingsResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return settingsResponse{}, err
 		}
@@ -58,7 +61,7 @@ func settingsHandler(deps Deps) func(context.Context, settingsRequest, dashcontr
 			StoreHealthy:          true,
 			StoreMessage:          storeAnswered,
 			RateLimiterConfigured: limiter,
-			TenantSource:          tenantSourceOf(p, deps),
+			TenantSource:          tenantSourceOf(ctx, p, deps),
 			Tenant:                tenant,
 			Enforcement:           enforcementTable(limiter),
 			EnforcedFields:        enforcedPolicyFieldCount(limiter),

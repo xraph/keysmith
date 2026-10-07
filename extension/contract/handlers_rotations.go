@@ -32,7 +32,7 @@ type rotationsListResponse struct {
 // tenant filter already excludes their rotations.
 func rotationsListHandler(deps Deps) func(context.Context, rotationsListRequest, dashcontract.Principal) (rotationsListResponse, error) {
 	return func(ctx context.Context, in rotationsListRequest, p dashcontract.Principal) (rotationsListResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return rotationsListResponse{}, err
 		}

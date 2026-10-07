@@ -136,7 +136,8 @@ func TestScopesCreateTrimsAndStores(t *testing.T) {
 }
 
 // The engine reads the tenant from the context and prefers a forge Scope over
-// keysmith.WithTenant. A host that sets one on every request must not decide
+// keysmith.WithTenant. When a tenant_id claim names another tenant than the
+// Scope's org, the claim wins in tenantFrom, and the Scope must not decide
 // where a scope lands.
 func TestScopesCreateStoresUnderTheContractTenant(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {

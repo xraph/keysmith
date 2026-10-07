@@ -103,7 +103,7 @@ func scopesCreateHandler(deps Deps) func(context.Context, scopesCreateRequest, d
 		if _, err := requireUser(p); err != nil {
 			return scopesCreateResponse{}, err
 		}
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return scopesCreateResponse{}, err
 		}
@@ -195,7 +195,7 @@ func scopesDeleteHandler(deps Deps) func(context.Context, scopesDeleteRequest, d
 		if _, err := requireUser(p); err != nil {
 			return scopesDeleteResponse{}, err
 		}
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return scopesDeleteResponse{}, err
 		}

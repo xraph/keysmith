@@ -51,7 +51,7 @@ func clampPickerPage(limit, offset int) (lim, off int) {
 
 func policiesListHandler(deps Deps) func(context.Context, pickerRequest, dashcontract.Principal) (policiesListResponse, error) {
 	return func(ctx context.Context, in pickerRequest, p dashcontract.Principal) (policiesListResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return policiesListResponse{}, err
 		}
@@ -85,7 +85,7 @@ func policiesListHandler(deps Deps) func(context.Context, pickerRequest, dashcon
 
 func scopesListHandler(deps Deps) func(context.Context, pickerRequest, dashcontract.Principal) (scopesListResponse, error) {
 	return func(ctx context.Context, in pickerRequest, p dashcontract.Principal) (scopesListResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return scopesListResponse{}, err
 		}

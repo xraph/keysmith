@@ -165,7 +165,7 @@ app := forge.New(
 )
 ```
 
-Upgrading from the templ dashboard? Read [MIGRATION.md](MIGRATION.md) before you bump: the dashboard is a React plugin in forge-dashboard now, and it refuses every request until you give it a tenant.
+Upgrading from the templ dashboard? Read [MIGRATION.md](MIGRATION.md) before you bump: the dashboard is a React plugin in forge-dashboard now. It shows the session's org when your auth extension sets one (authsome does), and it refuses a session without an org until you give it a tenant.
 
 ## REST API
 

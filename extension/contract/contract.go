@@ -29,10 +29,11 @@ type Deps struct {
 	Engine *keysmith.Engine
 
 	// DefaultTenantID is the tenant a request belongs to when the principal
-	// carries no tenant_id claim, which is every request today. Set it for a
-	// single-tenant deployment. Leaving it empty makes every read refuse,
-	// which is correct for a multi-tenant deployment with no tenant claim:
-	// the empty string would match every tenant's rows.
+	// carries no tenant_id claim and the context carries no forge Scope with
+	// an org. Under an auth extension that sets the session's org, it only
+	// answers for sessions without one. Leaving it empty makes those requests
+	// refuse, which is correct: the empty string would match every tenant's
+	// rows.
 	DefaultTenantID string
 
 	// DefaultAppID labels new rows when the principal carries no app_id

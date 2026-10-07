@@ -67,6 +67,34 @@ func TestKeysListIsTenantScopedByID(t *testing.T) {
 	})
 }
 
+// Under an auth extension that sets a forge Scope for the session's org,
+// the list shows that org's keys, not the configured tenant's.
+func TestKeysListFollowsTheSessionsOrg(t *testing.T) {
+	storetest.Each(t, func(t *testing.T, s store.Store) {
+		deps, eng := setup(t, s)
+		create(t, eng, "t1", nil)
+		mine := create(t, eng, "org_1", nil)
+		theirs := create(t, eng, "org_2", nil)
+
+		out, err := keysListHandler(deps)(orgCtx("org_1"), keysListRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, out.Keys, 1)
+		assert.Equal(t, mine.Key.ID.String(), out.Keys[0].ID)
+		assert.EqualValues(t, 1, out.Total)
+
+		out, err = keysListHandler(deps)(orgCtx("org_2"), keysListRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, out.Keys, 1)
+		assert.Equal(t, theirs.Key.ID.String(), out.Keys[0].ID)
+
+		// An app-only session falls back to the configured tenant.
+		out, err = keysListHandler(deps)(appOnlyCtx(), keysListRequest{}, principal())
+		require.NoError(t, err)
+		require.Len(t, out.Keys, 1)
+		assert.NotEqual(t, mine.Key.ID.String(), out.Keys[0].ID)
+	})
+}
+
 func TestKeysListFiltersAndPages(t *testing.T) {
 	storetest.Each(t, func(t *testing.T, s store.Store) {
 		deps, eng := setup(t, s)

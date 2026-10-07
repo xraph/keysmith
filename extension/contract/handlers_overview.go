@@ -46,7 +46,7 @@ type overviewCounts struct {
 // enforces.
 func overviewHandler(deps Deps) func(context.Context, overviewRequest, dashcontract.Principal) (overviewResponse, error) {
 	return func(ctx context.Context, _ overviewRequest, p dashcontract.Principal) (overviewResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return overviewResponse{}, err
 		}

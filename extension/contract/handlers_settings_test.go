@@ -192,13 +192,29 @@ func TestSettingsSaysWhereTheTenantCameFrom(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "config", out.TenantSource)
 	assert.Equal(t, "t1", out.Tenant)
+
+	// The session's org beats the configured tenant.
+	out, err = settingsHandler(deps)(orgCtx("org_1"), settingsRequest{}, principal())
+	require.NoError(t, err)
+	assert.Equal(t, "scope", out.TenantSource)
+	assert.Equal(t, "org_1", out.Tenant)
+
+	// An app-only session has no org to follow.
+	out, err = settingsHandler(deps)(appOnlyCtx(), settingsRequest{}, principal())
+	require.NoError(t, err)
+	assert.Equal(t, "config", out.TenantSource)
+	assert.Equal(t, "t1", out.Tenant)
 }
 
 func TestTenantSourceOfFollowsTenantFrom(t *testing.T) {
 	deps := Deps{DefaultTenantID: "t1"}
-	assert.Equal(t, "config", tenantSourceOf(user(nil), deps))
-	assert.Equal(t, "claim", tenantSourceOf(user(map[string]any{tenantClaim: "t2"}), deps))
-	assert.Equal(t, "config", tenantSourceOf(user(map[string]any{appClaim: "a"}), deps))
+	bare := context.Background()
+	assert.Equal(t, "config", tenantSourceOf(bare, user(nil), deps))
+	assert.Equal(t, "claim", tenantSourceOf(bare, user(map[string]any{tenantClaim: "t2"}), deps))
+	assert.Equal(t, "config", tenantSourceOf(bare, user(map[string]any{appClaim: "a"}), deps))
+	assert.Equal(t, "scope", tenantSourceOf(orgCtx("org_1"), user(nil), deps))
+	assert.Equal(t, "claim", tenantSourceOf(orgCtx("org_1"), user(map[string]any{tenantClaim: "t2"}), deps))
+	assert.Equal(t, "config", tenantSourceOf(appOnlyCtx(), user(nil), deps))
 }
 
 // defaultGraceSeconds is the engine's own fallback, pinned against a real

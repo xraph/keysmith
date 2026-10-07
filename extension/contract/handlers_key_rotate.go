@@ -49,7 +49,7 @@ type keysEndGraceResponse struct {
 func keysRotateHandler(deps Deps) func(context.Context, keysRotateRequest, dashcontract.Principal) (keysRotateResponse, error) {
 	return func(ctx context.Context, in keysRotateRequest, p dashcontract.Principal) (keysRotateResponse, error) {
 		const intent = "keys.rotate"
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return keysRotateResponse{}, err
 		}
@@ -161,7 +161,7 @@ func keysRotateHandler(deps Deps) func(context.Context, keysRotateRequest, dashc
 func keysEndGraceHandler(deps Deps) func(context.Context, keysEndGraceRequest, dashcontract.Principal) (keysEndGraceResponse, error) {
 	return func(ctx context.Context, in keysEndGraceRequest, p dashcontract.Principal) (keysEndGraceResponse, error) {
 		const intent = "keys.endGrace"
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return keysEndGraceResponse{}, err
 		}

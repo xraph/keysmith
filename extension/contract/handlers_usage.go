@@ -80,7 +80,7 @@ type usageRecordsResponse struct {
 // filter: another tenant's key or a missing one answers empty buckets.
 func usageSeriesHandler(deps Deps) func(context.Context, usageSeriesRequest, dashcontract.Principal) (usageSeriesResponse, error) {
 	return func(ctx context.Context, in usageSeriesRequest, p dashcontract.Principal) (usageSeriesResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return usageSeriesResponse{}, err
 		}
@@ -188,7 +188,7 @@ func usageSeriesHandler(deps Deps) func(context.Context, usageSeriesRequest, das
 // in the store's order, with the total that match. Both times are optional.
 func usageRecordsHandler(deps Deps) func(context.Context, usageRecordsRequest, dashcontract.Principal) (usageRecordsResponse, error) {
 	return func(ctx context.Context, in usageRecordsRequest, p dashcontract.Principal) (usageRecordsResponse, error) {
-		tenant, err := tenantFrom(p, deps)
+		tenant, err := tenantFrom(ctx, p, deps)
 		if err != nil {
 			return usageRecordsResponse{}, err
 		}
