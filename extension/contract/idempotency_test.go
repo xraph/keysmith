@@ -20,9 +20,11 @@ import (
 )
 
 // idemStore adapts forge's in-memory idempotency store to the dispatcher the
-// way forge's dashboard extension does (adaptIdempotencyStore, unexported
-// there), and keeps a copy of every entry the dispatcher writes so a test can
-// read what was stored.
+// way forge's dashboard extension does, and keeps a copy of every entry the
+// dispatcher writes so a test can read what was stored. Lookup and Store
+// mirror forge v1.12.1's unexported adaptIdempotencyStore
+// (extensions/dashboard/extension.go). If forge changes that wiring, change
+// this to match, or these tests stop testing what a host runs.
 type idemStore struct {
 	inner idempotency.Store
 
@@ -51,6 +53,8 @@ func (a *idemStore) Store(ctx context.Context, key, identity string, c dispatche
 // identity for principal() and intent.
 func (a *idemStore) entry(t *testing.T, key, intent string) *idempotency.Cached {
 	t.Helper()
+	// "user_1:"+intent mirrors forge's principalIdentity (dispatcher.go):
+	// the principal's subject, a colon, then the intent.
 	c, ok := a.inner.Lookup(context.Background(), key, "user_1:"+intent)
 	require.True(t, ok, "no idempotency entry for %s", intent)
 	return c
