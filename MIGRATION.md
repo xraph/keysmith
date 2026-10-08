@@ -233,7 +233,12 @@ The engine can do these and the dashboard doesn't offer them:
 
 ## Breaking changes for anyone upgrading keysmith
 
-These landed on keysmith main after 55b057f, up to and including 05ef9ca, which deleted the templ dashboard. The sqlite DSN entry came later, in afcf71c, and the tenant order, key version and conflict entries came after that, from a87f984 to e509c1b. If you embed keysmith, read them before you bump.
+These landed on keysmith main after 55b057f, up to and including 05ef9ca, which deleted the templ dashboard. The sqlite DSN entry came later, in afcf71c, and the tenant order, key version and conflict entries came after that, from a87f984 to e509c1b. The forge bump came last, in f5a154a. If you embed keysmith, read them before you bump.
+
+### Forge version
+
+- keysmith needs forge v1.12.1 now (f5a154a). It was on v1.10.0. `extension/contract` registers `keys.create` and `keys.rotate` with `dispatcher.SecretResponse()`, which forge added in v1.12.1 (b2dc5c71), so it won't compile against an older forge. When you bump keysmith, Go lifts your forge to v1.12.1 too, along with go-utils v1.3.0 and confy v1.0.3.
+- A dashboard client that sends `keys.create` or `keys.rotate` again with the same idempotency key gets `CONFLICT` now, with forge's message: "command already ran and its response held a secret that is not kept; send a new idempotency key to run it again". It used to get the first response back, raw key and all, from a cache that held it for 24 hours. The cache keeps a tombstone (status 409, no body) in its place, and the command doesn't run a second time. Every other command still replays its first answer.
 
 ### Stores and migrations
 
@@ -290,8 +295,8 @@ Plain `go test ./...` runs the store tests against memory and sqlite only. To co
 
 Reported during the migration and not fixed. One line each, with where it lives.
 
-- The forge dashboard's idempotency cache keeps every `keys.create` and `keys.rotate` response, raw key included, in server memory for 24 hours, replayable with the same idempotency key (forge: `extensions/dashboard/extension.go` wires `idempotency.NewInMemoryStore`, and the dispatcher hardcodes 24h). Forge fixed this in b2dc5c71 on forge main, which is unreleased: `dispatcher.SecretResponse()` on `RegisterCommand` and `Register` stores a tombstone (status 409, no body) in place of the response, and a replay answers `CONFLICT` without running the command again. Keysmith pins forge v1.10.0, so it adopts the option on `keys.create` and `keys.rotate` once a forge release carries b2dc5c71 (`extension/contract`). Until then, on released forge, the finding stands.
-- forge's dispatcher holds no claim while a handler runs, so two concurrent requests with the same idempotency key can both run, and both mint a key. Forge also keys idempotency on `user:intent` with no org, so one user's requests in two orgs share a key space (forge: `extensions/dashboard/contract/dispatcher`).
+- Replays are fixed: on forge v1.12.1 (b2dc5c71, adopted in f5a154a) a replay of `keys.create` or `keys.rotate` answers `CONFLICT` and the raw key is never kept (see Forge version above). Two overlapping dispatches with one idempotency key can still both run, though, and mint two keys, because v1.12.1's dispatcher checks the cache before the handler and writes it after, with no claim in between. Forge main fixes that in eb92b9bd and 903d90a2. It stays open until a forge release from main carries both and keysmith bumps to it (forge: `extensions/dashboard/contract/dispatcher`).
+- Forge keys idempotency on `user:intent` with no org, so one user's requests in two orgs share a key space (forge: `extensions/dashboard/contract/dispatcher`).
 - A compromise rotation (`WithGrace(0)`) leaves the key's earlier grace windows open, so you have to call `EndGrace` too (`engine.go`, `RotateKey`).
 - If the key update fails after its rotation record is written, the orphan record can shadow a later zero-grace rotation of the same old hash. The latest-created record for an old hash should decide (`engine.go` `RotateKey`, `GetInGraceByOldHash` in each rotation store).
 - `ValidateKey` treats a `GetByHash` store outage as a miss and answers `ErrInvalidKey` (`engine.go`, `ValidateKey`).
