@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/stretchr/testify v1.11.1
-	github.com/xraph/forge v1.12.1
+	github.com/xraph/forge v1.12.2
 	github.com/xraph/go-utils v1.3.0
 	github.com/xraph/grove v1.6.3
 	github.com/xraph/grove/drivers/mongodriver v1.6.3
