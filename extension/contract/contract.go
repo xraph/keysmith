@@ -110,10 +110,10 @@ func Register(
 			return dispatcher.RegisterQuery(d, c, "settings", 1, settingsHandler(deps))
 		}},
 		{"keys.create", func() error {
-			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps))
+			return dispatcher.RegisterCommand(d, c, "keys.create", 1, keysCreateHandler(deps), dispatcher.SecretResponse())
 		}},
 		{"keys.rotate", func() error {
-			return dispatcher.RegisterCommand(d, c, "keys.rotate", 1, keysRotateHandler(deps))
+			return dispatcher.RegisterCommand(d, c, "keys.rotate", 1, keysRotateHandler(deps), dispatcher.SecretResponse())
 		}},
 		{"keys.endGrace", func() error {
 			return dispatcher.RegisterCommand(d, c, "keys.endGrace", 1, keysEndGraceHandler(deps))
