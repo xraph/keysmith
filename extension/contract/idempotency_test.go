@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -167,7 +166,9 @@ func assertSecretNotKept(t *testing.T, data json.RawMessage, err error, raw stri
 	t.Helper()
 	require.Error(t, err)
 	assert.Equal(t, dashcontract.CodeConflict, codeOf(t, err))
-	assert.Contains(t, err.Error(), "send a new idempotency key")
+	var ce *dashcontract.Error
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, dispatcher.ReasonAlreadyRan, ce.Details[dispatcher.ReasonDetail])
 	assert.NotContains(t, err.Error(), raw)
 	assert.Empty(t, data)
 }
@@ -246,9 +247,17 @@ func TestNonSecretCommandStillReplays(t *testing.T) {
 		assert.JSONEq(t, string(first), string(second))
 		assert.Equal(t, []string{"read"}, swNames(t, s, "t1"))
 
+		// Forge keeps an ordinary success inside its bound replay envelope,
+		// with the full response next to the binding digest. Only a secret
+		// command leaves a bodyless tombstone.
 		c := idem.entry(t, "idem-scope-1", "scopes.create")
-		assert.Equal(t, http.StatusOK, c.Status)
-		assert.NotEmpty(t, c.WireBody)
+		var env struct {
+			Format   string          `json:"format"`
+			Response json.RawMessage `json:"response"`
+		}
+		require.NoError(t, json.Unmarshal(c.WireBody, &env))
+		assert.Equal(t, "forge.dashboard.idempotency", env.Format)
+		assert.NotEmpty(t, env.Response)
 	})
 }
 
