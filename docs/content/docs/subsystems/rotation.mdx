@@ -3,7 +3,7 @@ title: Key Rotation
 description: Zero-downtime API key rotation with configurable grace periods.
 ---
 
-The rotation subsystem enables zero-downtime API key rotation. When a key is rotated, both the old and new keys validate during a configurable grace period, giving clients time to migrate.
+The rotation subsystem lets you rotate an API key without an outage. When a key is rotated, both the old and new raw keys validate during a grace period, giving clients time to switch.
 
 ## Rotating a key
 
@@ -13,13 +13,13 @@ import "github.com/xraph/keysmith/rotation"
 newResult, err := eng.RotateKey(ctx,
     keyID,
     rotation.ReasonScheduled,
-    24*time.Hour, // grace period
+    keysmith.WithGrace(24*time.Hour), // grace period
 )
 if err != nil {
     log.Fatal(err)
 }
 
-fmt.Println("New Key:", newResult.RawKey) // save this — shown once
+fmt.Println("New Key:", newResult.RawKey) // save this: shown once
 ```
 
 ## Rotation reasons
@@ -27,30 +27,35 @@ fmt.Println("New Key:", newResult.RawKey) // save this — shown once
 | Reason | Constant | When to use |
 | ------ | -------- | ----------- |
 | `scheduled` | `rotation.ReasonScheduled` | Regular rotation schedule |
-| `compromised` | `rotation.ReasonCompromised` | Key may have been leaked |
-| `expiring` | `rotation.ReasonExpiring` | Key approaching expiration |
-| `manual` | `rotation.ReasonManual` | Manual rotation by admin |
+| `manual` | `rotation.ReasonManual` | Manual rotation by an admin |
+| `compromise` | `rotation.ReasonCompromise` | The key may have leaked |
+| `policy` | `rotation.ReasonPolicy` | A policy called for it |
+
+The reason is recorded and nothing more: a `compromise` rotation still gets a grace window unless you ask for none. For a leaked key, pass `keysmith.WithGrace(0)` so the old key stops at once, or close an open window later with `eng.EndGrace(ctx, keyID)`.
 
 ## Grace period behavior
 
-During the grace period:
+Rotation keeps the key's ID and state. It swaps the stored hash and hint, and writes a rotation record holding the old hash and the end of the grace window. During the grace period:
 
-1. The **new key** validates normally (state: `active`)
-2. The **old key** still validates (state: `rotated`, within grace window)
-3. After grace expiry, the old key stops validating
+1. The new raw key validates normally.
+2. The old raw key still validates, through the rotation record, with `ViaPreviousKey` true and `GraceEnds` set on the result.
+3. After the window closes, the old raw key fails with `ErrInvalidKey`.
+
+The grace period is the `WithGrace` value if you pass one, else the key's policy `GracePeriod`, else 24 hours. Revoking or suspending the key stops both raw keys, because validation checks the key's state either way.
 
 ```text
 Time ─────────────────────────────────────────────►
      │ Rotation    │ Grace period      │ Grace expired
      │             │                   │
-Old: │ active      │ rotated (valid)   │ rotated (invalid)
-New: │ active      │ active            │ active
+Old: │ valid       │ valid (previous)  │ invalid
+New: │ (n/a)       │ valid             │ valid
 ```
 
 ## Viewing rotation history
 
 ```go
-records, err := eng.ListRotations(ctx, keyID, &rotation.ListFilter{
+records, err := eng.ListRotations(ctx, &rotation.ListFilter{
+    KeyID: &keyID,
     Limit: 10,
 })
 
@@ -66,20 +71,26 @@ for _, rec := range records {
 | ----- | ---- | ----------- |
 | `ID` | `id.RotationID` | Unique record identifier |
 | `KeyID` | `id.KeyID` | Rotated key |
-| `OldHash` | `string` | Previous key hash |
-| `NewHash` | `string` | New key hash |
+| `TenantID` | `string` | The key's tenant |
+| `OldKeyHash`, `NewKeyHash` | `string` | Previous and new key hashes (never serialized to JSON) |
+| `OldHint`, `NewHint` | `string` | Last four characters of each raw key |
 | `Reason` | `Reason` | Why the rotation happened |
 | `GraceTTL` | `time.Duration` | Grace period duration |
-| `GraceExpiry` | `time.Time` | When the grace period ends |
+| `GraceEnds` | `time.Time` | When the grace period ends |
+| `RotatedBy` | `string` | Who rotated it, from `keysmith.WithRotatedBy` |
+| `CreatedAt` | `time.Time` | When the rotation happened |
 
 ## Rotation store interface
 
 ```go
 type Store interface {
-    Create(ctx context.Context, r *Record) error
-    GetByID(ctx context.Context, id id.RotationID) (*Record, error)
-    ListByKeyID(ctx context.Context, keyID id.KeyID, filter *ListFilter) ([]*Record, error)
-    GetActiveGrace(ctx context.Context, oldHash string) (*Record, error)
-    DeleteByKeyID(ctx context.Context, keyID id.KeyID) error
+    Create(ctx context.Context, rec *Record) error
+    Get(ctx context.Context, rotID id.RotationID) (*Record, error)
+    List(ctx context.Context, filter *ListFilter) ([]*Record, error)
+    ListPendingGrace(ctx context.Context, now time.Time) ([]*Record, error)
+    LatestForKey(ctx context.Context, keyID id.KeyID) (*Record, error)
+    GetInGraceByOldHash(ctx context.Context, hash string, now time.Time) (*Record, error)
+    EndGrace(ctx context.Context, keyID id.KeyID, at time.Time) (int64, error)
+    EndGraceByID(ctx context.Context, rotID id.RotationID, at time.Time) error
 }
 ```

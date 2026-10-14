@@ -3,7 +3,7 @@ title: Full Example
 description: End-to-end example using key creation, validation, rotation, policies, and scopes.
 ---
 
-This example demonstrates all major Keysmith subsystems working together in a single program.
+This example runs the major Keysmith subsystems together in one program: scopes, a policy, a key, validation, rotation with a grace window, and revocation. It uses the in-memory store, so it runs as is with `go run .`.
 
 ```go
 package main
@@ -15,24 +15,25 @@ import (
     "time"
 
     "github.com/xraph/keysmith"
+    audithook "github.com/xraph/keysmith/audit_hook"
     "github.com/xraph/keysmith/key"
+    "github.com/xraph/keysmith/observability"
     "github.com/xraph/keysmith/policy"
     "github.com/xraph/keysmith/rotation"
+    "github.com/xraph/keysmith/scope"
     "github.com/xraph/keysmith/store/memory"
-    audithook "github.com/xraph/keysmith/audit_hook"
-    "github.com/xraph/keysmith/observability"
 )
 
 func main() {
     ctx := context.Background()
 
-    // ── 1. Create an audit recorder ───────────────────
+    // 1. Create an audit recorder
     recorder := audithook.RecorderFunc(func(ctx context.Context, evt *audithook.AuditEvent) error {
-        fmt.Printf("  [audit] %s %s → %s\n", evt.Action, evt.ResourceID, evt.Outcome)
+        fmt.Printf("  [audit] %s %s: %s\n", evt.Action, evt.ResourceID, evt.Outcome)
         return nil
     })
 
-    // ── 2. Create the engine with plugins ─────────────
+    // 2. Create the engine with plugins
     store := memory.New()
     eng, err := keysmith.NewEngine(
         keysmith.WithStore(store),
@@ -43,23 +44,32 @@ func main() {
         log.Fatal(err)
     }
 
-    // ── 3. Set tenant context ─────────────────────────
+    // 3. Set tenant context
     ctx = keysmith.WithTenant(ctx, "my-app", "tenant-1")
 
-    // ── 4. Create a policy ────────────────────────────
+    // 4. Create the scopes a key may carry
+    for _, name := range []string{"read:users", "write:users"} {
+        if err := eng.CreateScope(ctx, &scope.Scope{Name: name}); err != nil {
+            log.Fatal(err)
+        }
+    }
+
+    // 5. Create a policy. RateLimit is only enforced with a RateLimiter,
+    // which this example doesn't configure.
     fmt.Println("=== Creating policy ===")
     pol := &policy.Policy{
-        Name:       "Standard API",
-        RateLimit:  1000,
-        RateWindow: time.Minute,
-        MaxKeyAge:  90 * 24 * time.Hour,
+        Name:            "Standard API",
+        RateLimit:       1000,
+        RateLimitWindow: time.Minute,
+        AllowedScopes:   []string{"read:users", "write:users"},
+        MaxKeyLifetime:  90 * 24 * time.Hour,
     }
     if err := eng.CreatePolicy(ctx, pol); err != nil {
         log.Fatal(err)
     }
     fmt.Printf("Policy: %s (rate: %d/min)\n\n", pol.Name, pol.RateLimit)
 
-    // ── 5. Create an API key ──────────────────────────
+    // 6. Create an API key
     fmt.Println("=== Creating API key ===")
     result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
         Name:        "Production Key",
@@ -71,52 +81,50 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("Raw Key: %s\n", result.RawKey)
-    fmt.Printf("Key ID:  %s\n\n", result.Key.ID)
+    fmt.Printf("Key ID:  %s\n", result.Key.ID)
+    fmt.Printf("Expires: %v\n\n", result.Key.ExpiresAt != nil) // set by MaxKeyLifetime
 
-    // ── 6. Validate the key ───────────────────────────
+    // 7. Validate the key
     fmt.Println("=== Validating key ===")
     vr, err := eng.ValidateKey(ctx, result.RawKey)
     if err != nil {
-        log.Fatal("validation failed:", err)
+        log.Fatal("validation failed: ", err)
     }
     fmt.Printf("Tenant:  %s\n", vr.Key.TenantID)
     fmt.Printf("State:   %s\n", vr.Key.State)
     fmt.Printf("Scopes:  %v\n\n", vr.Scopes)
 
-    // ── 7. Rotate the key ─────────────────────────────
+    // 8. Rotate the key, keeping the old one working for an hour
     fmt.Println("=== Rotating key ===")
     newResult, err := eng.RotateKey(ctx,
         result.Key.ID,
         rotation.ReasonScheduled,
-        1*time.Hour,
+        keysmith.WithGrace(time.Hour),
     )
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("New Key: %s\n", newResult.RawKey)
-    fmt.Println("Old key valid for 1 hour (grace period)\n")
+    fmt.Printf("Same key ID: %v\n\n", newResult.Key.ID == result.Key.ID)
 
-    // ── 8. Validate old key (still valid during grace) ─
+    // 9. The old raw key still validates during the grace window
     fmt.Println("=== Validating old key (grace period) ===")
     vr2, err := eng.ValidateKey(ctx, result.RawKey)
     if err != nil {
         fmt.Printf("Old key invalid: %v\n\n", err)
     } else {
-        fmt.Printf("Old key still valid: state=%s\n\n", vr2.Key.State)
+        fmt.Printf("Old key still valid: via previous key=%v\n\n", vr2.ViaPreviousKey)
     }
 
-    // ── 9. Revoke the old key ─────────────────────────
-    fmt.Println("=== Revoking old key ===")
+    // 10. Revoke the key. Rotation kept the ID, so this revokes the new
+    // raw key, and the old one stops validating too.
+    fmt.Println("=== Revoking key ===")
     if err := eng.RevokeKey(ctx, result.Key.ID, "replaced"); err != nil {
         log.Fatal(err)
     }
-    fmt.Println("Old key revoked.\n")
 
-    // ── 10. Validate revoked key (should fail) ────────
+    // 11. Validate the revoked key
     fmt.Println("=== Validating revoked key ===")
-    _, err = eng.ValidateKey(ctx, result.RawKey)
-    if err != nil {
+    if _, err := eng.ValidateKey(ctx, newResult.RawKey); err != nil {
         fmt.Printf("Expected error: %v\n", err)
     }
 }
@@ -124,35 +132,37 @@ func main() {
 
 ## Expected output
 
+IDs differ on every run.
+
 ```text
 === Creating policy ===
-  [audit] keysmith.policy.created kpol_01h... → success
+  [audit] keysmith.policy.created kpol_01m4y6...: success
 Policy: Standard API (rate: 1000/min)
 
 === Creating API key ===
-  [audit] keysmith.key.created akey_01h... → success
-Raw Key: sk_live_a3f8b2c9...
-Key ID:  akey_01h...
+  [audit] keysmith.key.created akey_01m4y6...: success
+Key ID:  akey_01m4y6...
+Expires: true
 
 === Validating key ===
-  [audit] keysmith.key.validated akey_01h... → success
+  [audit] keysmith.key.validated akey_01m4y6...: success
 Tenant:  tenant-1
 State:   active
 Scopes:  [read:users write:users]
 
 === Rotating key ===
-  [audit] keysmith.key.rotated akey_01h... → success
-New Key: sk_live_d7e8f9a0...
-Old key valid for 1 hour (grace period)
+  [audit] keysmith.key.rotated akey_01m4y6...: success
+Same key ID: true
 
 === Validating old key (grace period) ===
-  [audit] keysmith.key.validated akey_01h... → success
-Old key still valid: state=rotated
+  [audit] keysmith.key.validated akey_01m4y6...: success
+Old key still valid: via previous key=true
 
-=== Revoking old key ===
-  [audit] keysmith.key.revoked akey_01h... → success
-Old key revoked.
-
+=== Revoking key ===
+  [audit] keysmith.key.revoked akey_01m4y6...: success
 === Validating revoked key ===
-Expected error: key revoked
+  [audit] keysmith.key.validation_failed : failure
+Expected error: keysmith: key is not active
 ```
+
+A few things to notice. The scopes exist before the key that carries them; skip step 4 and `CreateKey` fails with "scope not found". The policy's `MaxKeyLifetime` gave the key an expiry even though the input set none. Rotation keeps the key's ID and swaps its hash, so the old raw key validates with `ViaPreviousKey` set until the grace window closes. A revoked key fails with `ErrKeyInactive`, which the HTTP middleware answers with 401.

@@ -9,45 +9,61 @@ Keysmith ships with a Forge extension adapter that handles DI registration, REST
 
 ```go
 import (
+    "context"
+    "log"
+
     "github.com/xraph/forge"
-    "github.com/xraph/keysmith"
-    "github.com/xraph/keysmith/extension"
-    "github.com/xraph/keysmith/store/postgres"
+    grove "github.com/xraph/grove/extension"
     audithook "github.com/xraph/keysmith/audit_hook"
+    "github.com/xraph/keysmith/extension"
 )
 
-app := forge.New(
-    forge.WithExtension(
+// Send key lifecycle events wherever your audit trail lives.
+recorder := audithook.RecorderFunc(func(ctx context.Context, ev *audithook.AuditEvent) error {
+    log.Printf("keysmith audit: %s %s", ev.Action, ev.ResourceID)
+    return nil
+})
+
+app := forge.NewApp(forge.AppConfig{
+    Name: "billing-api",
+    Extensions: []forge.Extension{
+        grove.New(), // extensions.grove: driver and dsn
         extension.New(
-            extension.WithEngineOptions(
-                keysmith.WithStore(pgStore),
-            ),
             extension.WithHookExtension(audithook.New(recorder)),
         ),
-    ),
-)
+    },
+})
 ```
+
+List Grove first, because Keysmith looks up the database during `Register`. Without a Grove database, pass a store yourself: `extension.WithEngineOptions(keysmith.WithStore(pgStore))`.
 
 ## What the extension does
 
 ### On registration
 
-1. Registers `keysmith.Engine` in the Forge DI container via `vessel.Provide`
-2. Registers the API route handler
+1. Loads config from `extensions.keysmith` (or a top-level `keysmith` key).
+2. Picks a store (see [store resolution](#store-resolution-order)) and builds the `keysmith.Engine` with your engine options and hooks.
+3. Registers the engine in the Forge DI container.
+4. Mounts the REST API under `base_path` (`/keysmith` by default), unless routes are disabled.
 
 ### On start
 
-1. Runs database migrations if a PostgreSQL store is configured
-2. Starts any background processes (e.g., expired key cleanup)
+1. Runs `Migrate` on the store, whichever backend it is, unless `disable_migrate` is set.
+2. Starts the engine. It has no background work: expired keys aren't swept on a timer, so call `eng.CleanupExpiredKeys(ctx)` from your own scheduler if you want them marked expired. (`ValidateKey` refuses an expired key either way.)
 
 ### On stop
 
-1. Fires the `Shutdown` plugin hook
-2. Closes the store connection
+Fires the `Shutdown` plugin hook. The extension doesn't close the store.
+
+### Health
+
+`Health` pings the store.
 
 ## REST API routes
 
-When mounted, the extension exposes the full Keysmith REST API:
+When mounted, the extension exposes the full Keysmith REST API under the base path (so `/keysmith/v1/keys` with the defaults).
+
+The REST API has no authentication of its own. Anyone who can reach it can create, rotate and revoke keys for any tenant they name. Put your auth middleware in front of the base path, or turn the routes off with `disable_routes` and call the engine from your own handlers.
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
@@ -84,10 +100,9 @@ When running inside Forge, Keysmith automatically extracts the app ID and tenant
 Access the engine from the Forge DI container:
 
 ```go
-// In a Forge handler
-func myHandler(ctx forge.Context) error {
-    eng := vessel.MustResolve[*keysmith.Engine](ctx.Vessel())
-    // use eng...
+eng, err := forge.Inject[*keysmith.Engine](app.Container())
+if err != nil {
+    log.Fatal(err)
 }
 ```
 
@@ -115,17 +130,18 @@ ext := extension.New(
 )
 ```
 
-This resolves the grove.DB named `"keysmith"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
+This resolves the grove.DB named `"keysmith"` from the DI container and auto-constructs the matching store. The driver type is detected automatically, so you don't import the store packages yourself.
 
 If the grove database is sqlite, add `_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate` to its DSN in your grove config, for example `keysmith.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate`. Without them a write can fail with `SQLITE_BUSY` and `ON DELETE CASCADE` gets skipped on most connections, and keysmith logs a warning at startup when the busy timeout is missing. [Connection settings](/docs/stores/sqlite#connection-settings) explains each one.
 
 ### Store resolution order
 
-The extension resolves its store in this order:
+The extension hands the engine every store it finds, and the last one wins:
 
-1. **Explicit store** -- if `WithEngineOptions(keysmith.WithStore(s))` was called, it is used directly and grove is ignored.
-2. **Grove database** -- if `WithGroveDatabase(name)` was called, the named or default `grove.DB` is resolved from DI.
-3. **In-memory fallback** -- if neither is configured, an in-memory store is used.
+1. Grove database: if `WithGroveDatabase(name)` was called (or `grove_database` is set), the named or default `grove.DB` is resolved from DI. Without either, a default `grove.DB` in the container is still picked up.
+2. Explicit store: the one from `WithEngineOptions(keysmith.WithStore(s))`, used only when no grove database is found.
+
+There is no in-memory fallback. With neither, `Register` fails with `keysmith: store is required`.
 
 ## Dashboard
 
@@ -171,13 +187,13 @@ When YAML and `WithDashboardTenant` both set a field, YAML wins. Each field is m
 
 | Option | Type | Default | Description |
 | ------ | ---- | ------- | ----------- |
-| `WithEngineOptions(opts...)` | `...keysmith.Option` | -- | Engine configuration options |
-| `WithHookExtension(x)` | `plugin.Plugin` | -- | Register a lifecycle plugin (repeatable) |
+| `WithEngineOptions(opts...)` | `...keysmith.Option` | none | Engine configuration options |
+| `WithHookExtension(x)` | `plugin.Plugin` | none | Register a lifecycle plugin (repeatable) |
 | `WithConfig(cfg)` | `Config` | defaults | Override default extension configuration |
-| `WithLogger(l)` | `*slog.Logger` | `slog.Default()` | Set the logger |
-| `WithDisableRoutes()` | -- | `false` | Skip HTTP route registration |
-| `WithDisableMigrate()` | -- | `false` | Skip migrations on Start |
-| `WithBasePath(path)` | `string` | `""` | URL prefix for keysmith routes |
+| `WithLogger(l)` | `log.Logger` (go-utils) | the extension's Forge logger | Set the logger the engine uses |
+| `WithDisableRoutes()` | none | `false` | Skip HTTP route registration |
+| `WithDisableMigrate()` | none | `false` | Skip migrations on Start |
+| `WithBasePath(path)` | `string` | `"/keysmith"` | URL prefix for keysmith routes |
 | `WithGroveDatabase(name)` | `string` | `""` | Named grove.DB to resolve from DI |
 | `WithRequireConfig(b)` | `bool` | `false` | Require config in YAML files |
 | `WithDashboardTenant(tenantID, appID)` | `string, string` | `"", ""` | Tenant the dashboard uses for a session with no org, and an optional app that labels rows it creates. A YAML value wins |
@@ -186,8 +202,8 @@ When YAML and `WithDashboardTenant` both set a field, YAML wins. Each field is m
 
 When running as a Forge extension, Keysmith automatically loads configuration from YAML config files. The extension looks for config under the following keys (in order):
 
-1. `extensions.keysmith` -- standard Forge extension config namespace
-2. `keysmith` -- top-level shorthand
+1. `extensions.keysmith`, the standard Forge extension config namespace
+2. `keysmith`, a top-level shorthand
 
 ### Example
 
@@ -210,7 +226,7 @@ extensions:
 |----------|------|---------|-------------|
 | `disable_routes` | `bool` | `false` | Skip HTTP route registration |
 | `disable_migrate` | `bool` | `false` | Skip migrations on Start |
-| `base_path` | `string` | `""` | URL prefix for all routes |
+| `base_path` | `string` | `"/keysmith"` | URL prefix for all routes (empty also means `/keysmith`) |
 | `grove_database` | `string` | `""` | Named grove.DB from DI |
 | `dashboard.tenant_id` | `string` | `""` | Tenant the dashboard uses for a session with no org. Leave it empty and those requests answer `PERMISSION_DENIED` |
 | `dashboard.app_id` | `string` | `""` | Labels rows the dashboard creates. Optional, and never filters a read |

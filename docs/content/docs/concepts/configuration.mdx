@@ -5,15 +5,19 @@ description: Configuring a Keysmith engine instance.
 
 Keysmith uses the functional options pattern for engine construction.
 
-## Default configuration
+## The Config struct
+
+The root package declares a `Config` struct:
 
 ```go
 type Config struct {
-    DefaultPrefix      string          // "sk"
-    DefaultEnvironment key.Environment // key.EnvLive
-    DefaultKeyLength   int             // 64 (hex characters)
+    DefaultPrefix      string
+    DefaultEnvironment key.Environment
+    DefaultKeyLength   int
 }
 ```
+
+Nothing reads it yet: there's no option that takes it, and `CreateKey` uses the `Prefix` and `Environment` you pass in `CreateKeyInput` as they are. Set them on every create.
 
 ## Engine options
 
@@ -30,12 +34,12 @@ eng, err := keysmith.NewEngine(
 
 | Option | Description |
 | ------ | ----------- |
-| `WithStore(store.Store)` | **Required.** Sets the composite store backend. |
+| `WithStore(store.Store)` | Required: `NewEngine` fails with "store is required" without it. Sets the composite store backend. |
 | `WithHasher(Hasher)` | Custom key hasher. Defaults to SHA-256. |
 | `WithKeyGenerator(KeyGenerator)` | Custom key generator. Defaults to `{prefix}_{env}_{64 hex}`. |
-| `WithRateLimiter(RateLimiter)` | Pluggable rate limiter for validation. No default. |
+| `WithRateLimiter(RateLimiter)` | Rate limiter for validation. No default, and without one a policy's `RateLimit` is never checked. |
 | `WithExtension(plugin.Plugin)` | Registers a lifecycle plugin. |
-| `WithLogger(*slog.Logger)` | Structured logger. Defaults to `slog.Default()`. |
+| `WithLogger(log.Logger)` | A `github.com/xraph/go-utils/log` logger. Defaults to a no-op logger. |
 
 ## Key format
 
@@ -53,8 +57,8 @@ Example: `sk_live_a3f8b2c9e1d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9
 
 ```go
 type Hasher interface {
-    Hash(rawKey string) string
-    Verify(rawKey, hash string) bool
+    Hash(rawKey string) (string, error)
+    Verify(rawKey, hash string) (bool, error)
 }
 ```
 
@@ -72,6 +76,9 @@ type KeyGenerator interface {
 
 ```go
 type RateLimiter interface {
-    Allow(ctx context.Context, keyID string, limit int, window time.Duration) (bool, error)
+    Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
+    Remaining(ctx context.Context, key string, limit int, window time.Duration) (int, error)
 }
 ```
+
+The engine calls `Allow` with the key's ID. Keysmith ships no implementation.

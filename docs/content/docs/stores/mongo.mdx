@@ -14,7 +14,11 @@ import (
     "github.com/xraph/keysmith/store/mongo"
 )
 
-db, err := grove.Open(mongodriver.Open("mongodb://localhost:27017", "keysmith"))
+drv := mongodriver.New()
+if err := drv.Open(ctx, "mongodb://localhost:27017/keysmith"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }

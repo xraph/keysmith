@@ -16,7 +16,7 @@ description: Complete Go package index for Keysmith.
 | `id` | `github.com/xraph/keysmith/id` | TypeID-based entity identifiers (akey, kpol, kusg, krot, kscp) |
 | `store` | `github.com/xraph/keysmith/store` | Composite store interface embedding all sub-stores |
 | `store/memory` | `github.com/xraph/keysmith/store/memory` | In-memory store for testing |
-| `store/postgres` | `github.com/xraph/keysmith/store/postgres` | PostgreSQL store with embedded migrations |
+| `store/postgres` | `github.com/xraph/keysmith/store/postgres` | PostgreSQL store on Grove's pgdriver; its schema SQL is compiled into the package |
 | `plugin` | `github.com/xraph/keysmith/plugin` | Lifecycle hook interfaces and dispatch manager |
 | `audit_hook` | `github.com/xraph/keysmith/audit_hook` | Audit trail plugin |
 | `observability` | `github.com/xraph/keysmith/observability` | Metrics plugin (go-utils counters) |
@@ -36,23 +36,33 @@ func NewEngine(opts ...Option) (*Engine, error)
 
 func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.CreateResult, error)
 func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationResult, error)
-func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, graceTTL time.Duration) (*key.CreateResult, error)
+func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, opts ...RotateOption) (*key.CreateResult, error)
+func (e *Engine) EndGrace(ctx context.Context, keyID id.KeyID) (int64, error)
 func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) error
 func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error
 func (e *Engine) ReactivateKey(ctx context.Context, keyID id.KeyID) error
 func (e *Engine) GetKey(ctx context.Context, keyID id.KeyID) (*key.Key, error)
 func (e *Engine) ListKeys(ctx context.Context, filter *key.ListFilter) ([]*key.Key, error)
+func (e *Engine) CreateScope(ctx context.Context, s *scope.Scope) error
+func (e *Engine) CreatePolicy(ctx context.Context, pol *policy.Policy) error
+func (e *Engine) RateLimiterConfigured() bool
 ```
+
+Rotate options are `WithGrace(d time.Duration)` and `WithRotatedBy(subject string)`. The full method list (scopes, policies, usage, rotations, cleanup) is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/keysmith).
 
 ### keysmith.CreateKeyInput
 
 ```go
 type CreateKeyInput struct {
     Name        string
+    Description string
     Prefix      string
     Environment key.Environment
-    Scopes      []string
     PolicyID    *id.PolicyID
+    Scopes      []string // each must already exist in the tenant
+    Metadata    map[string]any
+    CreatedBy   string
+    TenantID    string
     ExpiresAt   *time.Time
 }
 ```
@@ -61,8 +71,11 @@ type CreateKeyInput struct {
 
 ```go
 type ValidationResult struct {
-    Key    *key.Key
-    Scopes []string
+    Key            *key.Key
+    Scopes         []string
+    Policy         *policy.Policy
+    ViaPreviousKey bool       // a rotated key inside its grace window
+    GraceEnds      *time.Time // set when ViaPreviousKey is true
 }
 ```
 
@@ -70,9 +83,9 @@ type ValidationResult struct {
 
 ```go
 func WithTenant(ctx context.Context, appID, tenantID string) context.Context
-func AppIDFromContext(ctx context.Context) string
-func TenantIDFromContext(ctx context.Context) string
 ```
+
+There are no exported getters. The engine reads the tenant from what `WithTenant` set, or from `forge.Scope` under Forge.
 
 ## Functional options
 
@@ -82,5 +95,5 @@ func WithHasher(h Hasher) Option
 func WithKeyGenerator(g KeyGenerator) Option
 func WithRateLimiter(r RateLimiter) Option
 func WithExtension(p plugin.Plugin) Option
-func WithLogger(l *slog.Logger) Option
+func WithLogger(l log.Logger) Option // github.com/xraph/go-utils/log
 ```

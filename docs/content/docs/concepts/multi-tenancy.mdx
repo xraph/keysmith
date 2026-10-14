@@ -3,7 +3,7 @@ title: Multi-Tenancy
 description: Context-based tenant isolation across all subsystems.
 ---
 
-Keysmith is multi-tenant by design. Every operation is scoped to an app and tenant via `context.Context`. Cross-tenant data access is structurally impossible.
+Keysmith is multi-tenant by design. Management operations are scoped to an app and tenant via `context.Context`. Validation is the exception: it finds a key by its hash in any tenant (see below).
 
 ## Setting tenant context
 
@@ -20,48 +20,46 @@ ctx := keysmith.WithTenant(ctx, "my-app", "tenant-1")
 When running as a Forge extension, Keysmith automatically extracts scope from `forge.Scope`:
 
 ```go
-// Forge injects scope automatically via middleware.
-// AppID comes from forge.ScopeOrganization
-// TenantID comes from forge.ScopeOrganization
+// When the context carries a forge.Scope:
+//   app ID    = scope.AppID()
+//   tenant ID = scope.OrgID()
+// Otherwise Keysmith falls back to what keysmith.WithTenant set.
 ```
 
 ## How isolation works
 
 | Layer | Mechanism |
 | ----- | --------- |
-| **Context** | `WithTenant` injects app ID and tenant ID into `context.Context` |
-| **Engine** | Every operation reads scope from context before querying |
-| **Store** | All queries filter by app ID and tenant ID |
-| **Validation** | Key validation verifies the key belongs to the requesting tenant |
-| **Plugin hooks** | Lifecycle events carry tenant context for audit and metrics |
+| Context | `WithTenant` (or `forge.Scope` under Forge) puts the app ID and tenant ID on `context.Context` |
+| Engine | Create, list and management operations read the tenant from the context |
+| Store | List queries filter by tenant ID. The app ID is recorded on rows but never used as a read filter |
+| Validation | `ValidateKey` looks the key up by hash across all tenants and tells you which tenant it belongs to. It doesn't compare that with the tenant on the context |
+| Plugin hooks | Lifecycle events carry the key's tenant for audit and metrics |
 
 ## Reading scope from context
 
-```go
-appID := keysmith.AppIDFromContext(ctx)
-tenantID := keysmith.TenantIDFromContext(ctx)
-```
+There are no exported getters for the tenant on a context. Set it with `keysmith.WithTenant`, and read a key's tenant from the key itself (`vr.Key.TenantID` after validation).
 
 ## Store-level isolation
 
-Every store method receives the app ID and tenant ID from context. Queries are always scoped:
+List queries are scoped to the tenant from the context:
 
 ```sql
 -- Example: listing keys for a tenant
 SELECT * FROM keysmith_keys
-WHERE app_id = $1 AND tenant_id = $2
+WHERE tenant_id = $1
 ORDER BY created_at DESC
 ```
 
-A key created by tenant A is never returned when tenant B queries.
+A key created by tenant A is never returned when tenant B lists keys. Don't call an operation with an empty tenant: an empty tenant in a store filter matches every tenant's rows.
 
 ## Key validation across tenants
 
 When a raw API key is validated, the engine:
 
 1. Hashes the raw key with SHA-256
-2. Looks up the hash in the store (global lookup, not tenant-scoped)
-3. Verifies the found key belongs to the requesting tenant
-4. Returns `ErrKeyNotFound` if the key belongs to a different tenant
+2. Looks up the hash in the store (a global lookup, not tenant-scoped)
+3. Checks the key's state and expiry, and its policy's rate limit
+4. Returns the key, whose `TenantID` says which tenant it belongs to
 
-This design allows keys to be globally unique while maintaining strict tenant isolation.
+Validation doesn't check the key against the tenant on the request context. If your API serves several tenants and the caller names one (in the URL, say), compare it with `vr.Key.TenantID` yourself and refuse a mismatch.

@@ -8,11 +8,17 @@ The scope subsystem manages permission scopes that can be assigned to API keys. 
 ## Creating scopes
 
 ```go
-scp, err := eng.CreateScope(ctx, &scope.Scope{
+scp := &scope.Scope{
     Name:        "read:users",
     Description: "Read user profiles",
-})
+}
+if err := eng.CreateScope(ctx, scp); err != nil {
+    log.Fatal(err)
+}
+// scp.ID is set now.
 ```
+
+Create a scope before any key carries it. `CreateKey` and `AssignScopes` refuse a scope name that doesn't exist in the tenant ("scope not found"), and a name the key's policy doesn't allow (`ErrScopeNotAllowed`).
 
 ## Assigning scopes to keys
 
@@ -25,11 +31,11 @@ result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
     Scopes: []string{"read:users", "write:users"},
 })
 
-// Add scopes later
-err := eng.AssignScopes(ctx, keyID, []string{"read:billing"})
+// Add scopes later (read:billing must exist too)
+err = eng.AssignScopes(ctx, keyID, []string{"read:billing"})
 
 // Remove scopes
-err := eng.RemoveScopes(ctx, keyID, []string{"write:users"})
+err = eng.RemoveScopes(ctx, keyID, []string{"write:users"})
 ```
 
 ## Checking scopes during validation

@@ -3,7 +3,9 @@ title: REST API
 description: Keysmith REST API endpoints for key management.
 ---
 
-When mounted via the Forge extension, Keysmith exposes a complete REST API for managing API keys, policies, scopes, usage, and rotations.
+When mounted via the Forge extension, Keysmith exposes a REST API for managing API keys, policies, scopes, usage, and rotations. The paths below sit under the extension's base path, `/keysmith` by default, so creating a key is `POST /keysmith/v1/keys`.
+
+The API has no authentication of its own. Anyone who can reach it can create, rotate and revoke keys. Put your auth middleware in front of the base path, or turn the routes off with `disable_routes` and call the engine from your own handlers. Create the scopes a key will carry (`POST /v1/scopes`) before you create the key.
 
 ## Keys
 

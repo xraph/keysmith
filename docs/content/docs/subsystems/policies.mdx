@@ -1,35 +1,66 @@
 ---
 title: Policies
-description: Rate limits, IP allowlists, and key lifetime constraints.
+description: Rate limits, allowed scopes, key lifetimes and rotation grace periods.
 ---
 
-The policy subsystem provides fine-grained control over API key behavior. Attach a policy to a key to enforce rate limits, restrict IP addresses, limit origins, and set maximum key lifetimes.
+A policy is a named set of limits in a tenant. Attach one to a key to rate-limit it, cap its lifetime, restrict which scopes it may carry and set its rotation grace period. Only those four kinds of limit are enforced today; the policy stores more fields than that (see [Stored but not enforced](#stored-but-not-enforced)).
 
 ## Creating a policy
 
 ```go
-pol, err := eng.CreatePolicy(ctx, &policy.Policy{
-    Name:           "Standard API",
-    RateLimit:      1000,
-    RateWindow:     time.Minute,
-    AllowedIPs:     []string{"10.0.0.0/8", "172.16.0.0/12"},
-    AllowedOrigins: []string{"https://app.example.com"},
-    AllowedScopes:  []string{"read:users", "write:users"},
-    MaxKeyAge:      90 * 24 * time.Hour,
-})
+pol := &policy.Policy{
+    Name:            "Standard API",
+    RateLimit:       1000,
+    RateLimitWindow: time.Minute,
+    AllowedScopes:   []string{"read:users", "write:users"},
+    MaxKeyLifetime:  90 * 24 * time.Hour,
+    GracePeriod:     time.Hour,
+}
+if err := eng.CreatePolicy(ctx, pol); err != nil {
+    log.Fatal(err)
+}
+// pol.ID is set now.
 ```
 
-## Policy fields
+`CreatePolicy` returns only an error and fills in the ID on the struct you passed. Policy names are unique per tenant.
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `Name` | `string` | Human-readable policy name |
-| `RateLimit` | `int` | Maximum requests per window (0 = unlimited) |
-| `RateWindow` | `time.Duration` | Rate limit window duration |
-| `AllowedIPs` | `[]string` | CIDR-notation IP allowlist (empty = all allowed) |
-| `AllowedOrigins` | `[]string` | HTTP origin allowlist (empty = all allowed) |
-| `AllowedScopes` | `[]string` | Scopes this policy permits |
-| `MaxKeyAge` | `time.Duration` | Maximum key lifetime (0 = no limit) |
+## Enforced fields
+
+| Field | Type | Where it's enforced |
+| ----- | ---- | ------------------- |
+| `RateLimit`, `RateLimitWindow` | `int`, `time.Duration` | On every `ValidateKey`, but only when you gave the engine a `RateLimiter` with `keysmith.WithRateLimiter`. Without one the limit is stored and never checked; `eng.RateLimiterConfigured()` tells you which case you're in. Over the limit, `ValidateKey` returns `ErrRateLimited` |
+| `MaxKeyLifetime` | `time.Duration` | On `CreateKey`. An `ExpiresAt` beyond it is refused with `ErrKeyLifetimeExceeded`, and a key with no expiry gets one at the cap |
+| `AllowedScopes` | `[]string` | On `CreateKey` and `AssignScopes`. A key can't carry a scope the policy doesn't list (`ErrScopeNotAllowed`) |
+| `GracePeriod` | `time.Duration` | On `RotateKey`, when you don't pass `keysmith.WithGrace` |
+
+Keysmith ships no `RateLimiter` implementation. You provide one:
+
+```go
+type RateLimiter interface {
+    Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
+    Remaining(ctx context.Context, key string, limit int, window time.Duration) (int, error)
+}
+```
+
+The engine calls `Allow` with the key ID as `key`.
+
+## Stored but not enforced
+
+The policy also stores `BurstLimit`, `AllowedIPs`, `AllowedOrigins`, `AllowedMethods`, `AllowedPaths`, `RotationPeriod`, `DailyQuota` and `MonthlyQuota`, and returns them on validation in `ValidationResult.Policy`. Keysmith doesn't enforce any of them yet: a request from an IP outside `AllowedIPs` still validates, and nothing stops a key at its quota or rotates it after `RotationPeriod`.
+
+If you need one of them now, enforce it in your handler after validation:
+
+```go
+res, err := eng.ValidateKey(ctx, rawKey)
+if err != nil {
+    return err
+}
+if res.Policy != nil && len(res.Policy.AllowedIPs) > 0 && !ipAllowed(clientIP, res.Policy.AllowedIPs) {
+    return errForbidden
+}
+```
+
+`ipAllowed` and `errForbidden` stand for your own code.
 
 ## Attaching a policy to a key
 
@@ -38,20 +69,10 @@ Attach a policy at key creation time:
 ```go
 result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
     Name:     "Rate-Limited Key",
-    PolicyID: &policyID,
+    PolicyID: &pol.ID,
+    Scopes:   []string{"read:users"}, // must exist, and be in AllowedScopes
 })
 ```
-
-## Policy enforcement during validation
-
-When a key with an attached policy is validated, the engine checks:
-
-1. **Rate limit** -- If `RateLimit > 0` and a `RateLimiter` is configured, the engine checks whether the key has exceeded its rate limit.
-2. **IP allowlist** -- If `AllowedIPs` is non-empty, the request IP must match one of the CIDR ranges.
-3. **Origin allowlist** -- If `AllowedOrigins` is non-empty, the request origin must match.
-4. **Key age** -- If `MaxKeyAge > 0`, the key must not exceed the maximum age.
-
-Policy violations return `ErrPolicyViolation`.
 
 ## Updating and deleting policies
 
@@ -61,17 +82,19 @@ pol.RateLimit = 2000
 err := eng.UpdatePolicy(ctx, pol)
 
 // Delete
-err := eng.DeletePolicy(ctx, policyID)
+err = eng.DeletePolicy(ctx, pol.ID)
 ```
 
 ## Policy store interface
 
 ```go
 type Store interface {
-    Create(ctx context.Context, p *Policy) error
-    GetByID(ctx context.Context, id id.PolicyID) (*Policy, error)
+    Create(ctx context.Context, pol *Policy) error
+    Get(ctx context.Context, polID id.PolicyID) (*Policy, error)
+    GetByName(ctx context.Context, tenantID, name string) (*Policy, error)
+    Update(ctx context.Context, pol *Policy) error
+    Delete(ctx context.Context, polID id.PolicyID) error
     List(ctx context.Context, filter *ListFilter) ([]*Policy, error)
-    Update(ctx context.Context, p *Policy) error
-    Delete(ctx context.Context, id id.PolicyID) error
+    Count(ctx context.Context, filter *ListFilter) (int64, error)
 }
 ```

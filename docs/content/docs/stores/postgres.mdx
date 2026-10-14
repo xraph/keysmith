@@ -1,9 +1,9 @@
 ---
 title: PostgreSQL Store
-description: Production PostgreSQL backend using grove ORM with pgdriver.
+description: PostgreSQL backend on Grove's pgdriver.
 ---
 
-The PostgreSQL store provides a full `store.Store` implementation using grove ORM with the pgdriver backend. It includes embedded SQL migrations and is the recommended backend for production.
+The PostgreSQL store provides a full `store.Store` implementation on Grove's `pgdriver`. It takes a `*pgdriver.PgDB`, not a `*grove.DB`, and its schema SQL is compiled into the package as Go strings.
 
 ## Setup
 
@@ -21,7 +21,7 @@ defer pgStore.Close()
 
 ### From an existing grove.DB
 
-If your application already manages a `grove.DB` connection (e.g. via the Grove extension), pass the unwrapped pgdriver instance:
+If your application already manages a `grove.DB` connection (e.g. via the Grove extension), pass the unwrapped pgdriver instance. This is what the Forge extension does:
 
 ```go
 import (
@@ -30,9 +30,11 @@ import (
     "github.com/xraph/keysmith/store/postgres"
 )
 
-db, err := grove.Open(pgdriver.New(
-    pgdriver.WithDSN("postgres://user:pass@localhost:5432/mydb"),
-))
+drv := pgdriver.New()
+if err := drv.Open(ctx, "postgres://user:pass@localhost:5432/mydb"); err != nil {
+    log.Fatal(err)
+}
+db, err := grove.Open(drv)
 if err != nil {
     log.Fatal(err)
 }
@@ -42,7 +44,7 @@ pgStore := postgres.New(pgdriver.Unwrap(db))
 
 ## Migrations
 
-The store embeds SQL migrations. Run them on startup:
+`Migrate` runs the schema statements in order on every call. They're plain Go string constants in `store/postgres/migrations.go`, not `go:embed`ed files: the `.sql` files under `store/postgres/migrations/` are kept for reference and aren't read at runtime. Run it on startup:
 
 ```go
 if err := pgStore.Migrate(ctx); err != nil {
@@ -61,7 +63,7 @@ This creates six tables:
 | `keysmith_usage` | Per-request usage records |
 | `keysmith_rotations` | Rotation history records |
 
-Migrations are idempotent and safe to run on every startup.
+Every statement is idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS` and so on), so it's safe to run on every startup. The same steps are also registered as a Grove migration group, `postgres.Migrations`, if you'd rather run them through Grove's migrator.
 
 ## Health checks
 

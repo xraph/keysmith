@@ -12,20 +12,23 @@ result, err := eng.CreateKey(ctx, &keysmith.CreateKeyInput{
     Name:        "Production Key",
     Prefix:      "sk",
     Environment: key.EnvLive,
-    Scopes:      []string{"read:users", "write:users"},
+    Scopes:      []string{"read:users", "write:users"}, // must already exist
 })
 ```
+
+Every scope you list has to exist in the tenant first (`eng.CreateScope`), or `CreateKey` fails with "scope not found".
 
 The `CreateKeyInput` struct accepts:
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `Name` | `string` | Human-readable key name |
-| `Prefix` | `string` | Key prefix (defaults to "sk") |
-| `Environment` | `key.Environment` | live, test, or dev |
+| `Prefix` | `string` | Key prefix. There's no default: an empty prefix gives a key starting with `_` |
+| `Environment` | `key.Environment` | `key.EnvLive`, `key.EnvTest` or `key.EnvStaging` |
 | `Scopes` | `[]string` | Permission scopes to assign |
 | `PolicyID` | `*id.PolicyID` | Optional policy to attach |
-| `ExpiresAt` | `*time.Time` | Optional expiration time |
+| `ExpiresAt` | `*time.Time` | Optional expiration time (capped by the policy's `MaxKeyLifetime`) |
+| `Description`, `Metadata`, `CreatedBy`, `TenantID` | | Optional; the tenant normally comes from the context |
 
 The result contains the raw key (shown once) and the key metadata:
 
@@ -39,7 +42,7 @@ fmt.Println(result.Key.ID)  // akey_01h2xce...
 ```go
 vr, err := eng.ValidateKey(ctx, rawKey)
 if err != nil {
-    // Handle ErrKeyNotFound, ErrKeyExpired, etc.
+    // ErrInvalidKey, ErrKeyInactive, ErrKeyExpired, ErrRateLimited
 }
 
 fmt.Println(vr.Key.ID)       // akey_01h2xce...
@@ -51,12 +54,14 @@ fmt.Println(vr.Scopes)       // [read:users write:users]
 Validation performs these checks in order:
 
 1. Hash the raw key with SHA-256
-2. Look up the hash in the store
-3. Check key state (must be `active` or within rotation grace period)
-4. Check expiration
-5. Enforce attached policy (rate limits, IP allowlist, etc.)
-6. Fire `KeyValidated` or `KeyValidationFailed` hooks
-7. Record usage
+2. Look up the hash in the store, then among rotated keys still inside their grace window (`ErrInvalidKey` if neither matches)
+3. Check key state: it must be `active` (`ErrKeyInactive` otherwise)
+4. Check expiration (`ErrKeyExpired`)
+5. Enforce the attached policy's rate limit, if a `RateLimiter` is configured (`ErrRateLimited`). No other policy field is checked here
+6. Load the key's scopes
+7. Fire `KeyValidated` or `KeyValidationFailed` hooks
+
+Validation doesn't record usage. Call `eng.RecordUsage` yourself if you want it.
 
 ## Rotating keys
 
@@ -64,15 +69,15 @@ Validation performs these checks in order:
 newResult, err := eng.RotateKey(ctx,
     keyID,
     rotation.ReasonScheduled,
-    24*time.Hour, // grace period
+    keysmith.WithGrace(24*time.Hour), // optional
 )
 ```
 
 During rotation:
-- A new key is generated and returned
-- The old key state transitions to `rotated`
-- Both old and new keys validate during the grace period
-- After grace expiry, only the new key validates
+- A new raw key is generated and returned. The key keeps its ID and state (`active`); only its hash and hint change
+- A rotation record keeps the old hash, so the old raw key validates (with `ViaPreviousKey` set) until the grace window closes
+- After the grace window, only the new raw key validates
+- Without `WithGrace`, the grace period is the policy's `GracePeriod`, else 24 hours
 
 ## Revoking keys
 
@@ -92,7 +97,7 @@ err := eng.SuspendKey(ctx, keyID)
 err := eng.ReactivateKey(ctx, keyID)
 ```
 
-Suspension is temporary. A suspended key returns `ErrKeySuspended` during validation and can be reactivated later.
+Suspension is temporary. A suspended key fails validation with `ErrKeyInactive` (the same error a revoked key gets) and can be reactivated later. A revoked key can't be reactivated: `ReactivateKey` returns `ErrInvalidStateTransition`.
 
 ## Listing keys
 

@@ -40,7 +40,7 @@ The `key.Key` struct represents an API key. Raw keys are never stored -- only th
 | ----- | -------- | ----------- |
 | `live` | `key.EnvLive` | Production environment |
 | `test` | `key.EnvTest` | Testing environment |
-| `dev` | `key.EnvDev` | Development environment |
+| `staging` | `key.EnvStaging` | Staging environment |
 
 ## Policy
 
@@ -50,12 +50,14 @@ The `policy.Policy` struct defines constraints for API keys.
 | ----- | ---- | ----------- |
 | `ID` | `id.PolicyID` | Unique identifier |
 | `Name` | `string` | Policy name |
-| `RateLimit` | `int` | Max requests per window |
-| `RateWindow` | `time.Duration` | Rate limit window |
-| `AllowedIPs` | `[]string` | CIDR-notation IP allowlist |
-| `AllowedOrigins` | `[]string` | HTTP origin allowlist |
-| `AllowedScopes` | `[]string` | Permitted scopes |
-| `MaxKeyAge` | `time.Duration` | Maximum key lifetime |
+| `RateLimit` | `int` | Max requests per window (enforced only with a `RateLimiter`) |
+| `RateLimitWindow` | `time.Duration` | Rate limit window |
+| `AllowedScopes` | `[]string` | Permitted scopes (enforced on create and assign) |
+| `MaxKeyLifetime` | `time.Duration` | Maximum key lifetime (enforced on create) |
+| `GracePeriod` | `time.Duration` | Default rotation grace period (enforced on rotate) |
+| `BurstLimit`, `AllowedIPs`, `AllowedOrigins`, `AllowedMethods`, `AllowedPaths`, `RotationPeriod`, `DailyQuota`, `MonthlyQuota` | various | Stored and returned on validation, not enforced yet |
+
+See [Policies](/docs/subsystems/policies) for what each enforced field does.
 
 ## Scope
 

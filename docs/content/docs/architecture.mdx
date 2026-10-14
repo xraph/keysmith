@@ -14,7 +14,7 @@ Keysmith is organized as a set of focused Go packages. The root `keysmith` packa
 │  CreateKey   ValidateKey   RotateKey   RevokeKey   SuspendKey          │
 │  ReactivateKey   GetKey   ListKeys                                     │
 │  CreatePolicy  UpdatePolicy  DeletePolicy  ListPolicies                │
-│  AssignScopes  RemoveScopes  RecordUsage  GetUsageAggregation         │
+│  AssignScopes  RemoveScopes  RecordUsage  AggregateUsage              │
 ├──────────────────────────┬──────────────────────────────────────────────┤
 │   Supporting packages    │   Plugin system                              │
 │                          │                                              │
@@ -73,10 +73,10 @@ ctx := keysmith.WithTenant(ctx, "my-app", "tenant-1")
 
 Each operation resolves the requested resource using scope values from context:
 
-- **CreateKey** -- generates a raw key, hashes it with SHA-256, stores the hash, fires `KeyCreated` hooks
-- **ValidateKey** -- hashes the incoming raw key, looks up the hash in the store, checks state, checks policy, fires `KeyValidated` or `KeyValidationFailed`
-- **RotateKey** -- creates a new key, marks old key as `rotated`, records grace period, fires `KeyRotated`
-- **RevokeKey** -- transitions key to `revoked` state, fires `KeyRevoked`
+- `CreateKey` checks the scopes exist (and the policy allows them), generates a raw key, hashes it with SHA-256, stores the hash, fires `KeyCreated` hooks
+- `ValidateKey` hashes the incoming raw key, looks up the hash (then any open rotation grace window), checks state and expiry, checks the policy's rate limit when a `RateLimiter` is set, fires `KeyValidated` or `KeyValidationFailed`
+- `RotateKey` generates a new raw key, swaps the key's hash (the key keeps its ID and `active` state), records the old hash with its grace window, fires `KeyRotated`
+- `RevokeKey` transitions the key to `revoked` state, fires `KeyRevoked`
 
 ### 3. Respond
 
@@ -85,11 +85,13 @@ The result is returned to the caller. For validation, this includes the key enti
 ## Key states
 
 ```text
-active → rotated → revoked
 active → suspended → active (reactivate)
 active → expired
 active → revoked
+suspended → revoked
 ```
+
+There's a `rotated` state constant, but the engine never assigns it: rotation keeps the key `active`.
 
 ## Tenant isolation
 
@@ -97,11 +99,11 @@ Keysmith enforces tenant isolation at multiple layers:
 
 | Layer | Mechanism |
 | ----- | --------- |
-| **Context** | `keysmith.WithTenant` injects app ID and tenant ID into `context.Context` |
-| **Engine** | Every operation reads scope from context before querying the store |
-| **Store** | All queries include app ID and tenant ID as scoping parameters |
-| **Validation** | Key validation verifies the key belongs to the requesting tenant |
-| **Plugin hooks** | Lifecycle events include tenant context for audit and metrics |
+| Context | `keysmith.WithTenant` (or `forge.Scope`) puts the app ID and tenant ID on `context.Context` |
+| Engine | Management operations read the tenant from the context before querying the store |
+| Store | List queries filter by tenant ID; the app ID is recorded but not used to filter reads |
+| Validation | `ValidateKey` looks the hash up across all tenants and returns the key's tenant; it doesn't compare it with the context |
+| Plugin hooks | Lifecycle events carry the key, and so its tenant, for audit and metrics |
 
 ## Plugin system
 
@@ -149,7 +151,7 @@ func (p *myPlugin) OnKeyRevoked(ctx context.Context, k *key.Key, reason string) 
 | `id` | `github.com/xraph/keysmith/id` | TypeID-based entity identifiers (akey, kpol, kusg, krot, kscp) |
 | `store` | `github.com/xraph/keysmith/store` | Composite store interface embedding all sub-stores |
 | `store/memory` | `github.com/xraph/keysmith/store/memory` | In-memory store for testing |
-| `store/postgres` | `github.com/xraph/keysmith/store/postgres` | PostgreSQL store with embedded migrations |
+| `store/postgres` | `github.com/xraph/keysmith/store/postgres` | PostgreSQL store on Grove's pgdriver; its schema SQL is compiled into the package |
 | `plugin` | `github.com/xraph/keysmith/plugin` | Lifecycle hook interfaces and dispatch manager |
 | `audit_hook` | `github.com/xraph/keysmith/audit_hook` | Audit trail plugin |
 | `observability` | `github.com/xraph/keysmith/observability` | Metrics plugin (go-utils counters) |

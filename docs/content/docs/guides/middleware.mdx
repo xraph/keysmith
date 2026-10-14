@@ -3,21 +3,22 @@ title: HTTP Middleware
 description: Protecting routes with API key validation and scope checks.
 ---
 
-The `middleware` package provides Forge-compatible HTTP middleware for API key validation and scope enforcement.
+The `middleware` package provides standard `net/http` middleware (`func(http.Handler) http.Handler`) for API key validation and scope enforcement. It works with any router, and with Forge through an adapter.
 
 ## API key authentication
 
-The `APIKeyAuth` middleware extracts an API key from the `Authorization` header (Bearer token) or `X-API-Key` header, validates it, and stores the result in the request context.
+The `APIKeyAuth` middleware extracts an API key from the `Authorization` header (Bearer token) or the `X-API-Key` header, validates it, and stores the result in the request context.
 
 ```go
 import "github.com/xraph/keysmith/middleware"
 
-// Create the middleware
 auth := middleware.APIKeyAuth(eng)
 
-// Apply to routes
-app.Use(auth)
+mux := http.NewServeMux()
+mux.Handle("GET /users", auth(listUsersHandler))
 ```
+
+Validation needs no tenant on the context: the key is looked up by its hash, and the result tells you which tenant it belongs to (`vr.Key.TenantID`).
 
 ### Key extraction
 
@@ -28,56 +29,66 @@ The middleware looks for the API key in this order:
 
 If no key is found, it returns `401 Unauthorized`.
 
+### Status codes
+
+| Validation error | Status |
+| ---------------- | ------ |
+| no key in the request | 401 |
+| `ErrRateLimited` | 429 |
+| `ErrKeyExpired` | 403 |
+| anything else, including `ErrKeyInactive` for a revoked or suspended key, and `ErrInvalidKey` | 401 |
+
+A revoked or suspended key gets 401, not 403: the engine reports both as `ErrKeyInactive`.
+
 ## Scope enforcement
 
-The `RequireScopes` middleware checks that the validated key has all the required scopes.
+The `RequireScopes` middleware checks that the validated key holds every scope you list. Put it inside `APIKeyAuth`:
 
 ```go
-// Require specific scopes
-protected := middleware.RequireScopes("read:users", "write:users")
-
-// Chain with auth
-app.Use(auth, protected)
+mux.Handle("POST /users",
+    middleware.APIKeyAuth(eng)(
+        middleware.RequireScopes("write:users")(createUserHandler),
+    ),
+)
 ```
 
-If the key does not have the required scopes, it returns `403 Forbidden`.
+If the key lacks one of the scopes, it returns `403 Forbidden`. Without a validation result on the context (no `APIKeyAuth` in front), it returns `401`.
 
 ## Accessing the validation result
 
-After the middleware validates a key, the validation result is available from the context:
+After the middleware validates a key, the result is on the request context:
 
 ```go
-func myHandler(ctx forge.Context) error {
-    vr := middleware.ResultFromContext(ctx)
-    if vr == nil {
-        return fmt.Errorf("no validation result")
+func myHandler(w http.ResponseWriter, r *http.Request) {
+    vr, ok := middleware.ResultFromContext(r.Context())
+    if !ok {
+        http.Error(w, "no API key", http.StatusUnauthorized)
+        return
     }
 
     fmt.Println("Key ID:", vr.Key.ID)
     fmt.Println("Tenant:", vr.Key.TenantID)
     fmt.Println("Scopes:", vr.Scopes)
-    return nil
+    if vr.ViaPreviousKey {
+        // The caller used a rotated key still inside its grace window,
+        // until vr.GraceEnds. A good moment to warn them.
+    }
 }
 ```
 
-## Full example
+`vr.Policy` carries the key's policy, including fields Keysmith stores but doesn't enforce yet (IP and origin allowlists, quotas). Check those here if you need them.
+
+## With Forge
+
+Forge routes take `forge.Middleware`. Wrap the `net/http` middleware with `forge.PureMiddleware(...).ToMiddleware()`:
 
 ```go
-import (
-    "github.com/xraph/forge"
-    "github.com/xraph/keysmith"
-    "github.com/xraph/keysmith/middleware"
+auth := forge.PureMiddleware(middleware.APIKeyAuth(eng)).ToMiddleware()
+canRead := forge.PureMiddleware(middleware.RequireScopes("read:users")).ToMiddleware()
+
+err := router.GET("/api/v1/users", listUsersHandler,
+    forge.WithMiddleware(auth, canRead),
 )
-
-// Public routes — no auth
-app.GET("/health", healthHandler)
-
-// Protected routes — require valid API key
-app.Group("/api/v1", middleware.APIKeyAuth(eng), func(g *forge.Group) {
-    // Requires read:users scope
-    g.GET("/users", middleware.RequireScopes("read:users"), listUsersHandler)
-
-    // Requires write:users scope
-    g.POST("/users", middleware.RequireScopes("write:users"), createUserHandler)
-})
 ```
+
+Inside a Forge handler, read the result with `middleware.ResultFromContext(ctx.Request().Context())`.
