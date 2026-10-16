@@ -8,6 +8,8 @@ import (
 	"time"
 
 	log "github.com/xraph/go-utils/log"
+	gometrics "github.com/xraph/go-utils/metrics"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/keysmith/id"
 	"github.com/xraph/keysmith/key"
@@ -27,6 +29,8 @@ type Engine struct {
 	ratelimiter RateLimiter
 	hooks       *plugin.Manager
 	logger      log.Logger
+	metrics     gometrics.Metrics
+	tel         *telemetry
 }
 
 // NewEngine creates a new Keysmith engine with the given options.
@@ -43,6 +47,7 @@ func NewEngine(opts ...Option) (*Engine, error) {
 	if e.store == nil {
 		return nil, errors.New("keysmith: store is required")
 	}
+	e.tel = newTelemetry(e.metrics)
 	return e, nil
 }
 
@@ -73,6 +78,13 @@ func (e *Engine) Stop(ctx context.Context) error {
 // CreateKey generates a new API key, hashes it, stores the hash, and returns
 // the raw key exactly once. The raw key is never persisted.
 func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.CreateResult, error) {
+	ctx, op := e.startOperation(ctx, opCreate, spanCreateKey)
+	res, err := e.createKey(ctx, input)
+	op.end(err)
+	return res, err
+}
+
+func (e *Engine) createKey(ctx context.Context, input *CreateKeyInput) (*key.CreateResult, error) {
 	sc := scopeFromContext(ctx)
 	tenantID := sc.tenantID
 	appID := sc.appID
@@ -138,7 +150,7 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 	}
 
 	if err := e.store.Keys().Create(ctx, k); err != nil {
-		_ = e.hooks.FireKeyCreateFailed(ctx, k, err)
+		e.hookDone(ctx, hookKeyCreateFailed, e.hooks.FireKeyCreateFailed(ctx, k, err))
 		return nil, fmt.Errorf("store key: %w", err)
 	}
 
@@ -158,7 +170,7 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 		k.Scopes = input.Scopes
 	}
 
-	_ = e.hooks.FireKeyCreated(ctx, k)
+	e.hookDone(ctx, hookKeyCreated, e.hooks.FireKeyCreated(ctx, k))
 
 	return &key.CreateResult{Key: k, RawKey: rawKey}, nil
 }
@@ -166,12 +178,50 @@ func (e *Engine) CreateKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 // ValidateKey validates a raw API key and returns the key record if valid.
 // This is the hot path — optimized for speed.
 func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationResult, error) {
+	start := time.Now()
+	ctx, span := startSpan(ctx, spanValidateKey)
+	res, out, err := e.validateKey(ctx, rawKey)
+	e.tel.validated(out.result, out.viaPrevious, time.Since(start))
+	if span.IsRecording() {
+		span.SetAttributes(attrResult.String(out.result), attrViaPreviousKey.Bool(out.viaPrevious))
+		if out.result == validationError {
+			markError(span, out.cause)
+		}
+	}
+	span.End()
+	return res, err
+}
+
+// validation is what ValidateKey reports to its span and metrics. cause is
+// the failure behind result "error". It is kept apart from the returned
+// error because a store failure while looking the key up is still answered
+// with ErrInvalidKey, so a host can't tell an outage from a bad key; the
+// telemetry can.
+type validation struct {
+	result      string
+	viaPrevious bool
+	cause       error
+}
+
+// lookupFailed sorts a failed key lookup: a miss on both the current hash
+// and the grace windows is an invalid key, and anything else is a store
+// failure.
+func lookupFailed(errs ...error) validation {
+	for _, err := range errs {
+		if err != nil && !errors.Is(err, ErrKeyNotFound) && !errors.Is(err, ErrRotationNotFound) {
+			return validation{result: validationError, cause: err}
+		}
+	}
+	return validation{result: validationInvalid}
+}
+
+func (e *Engine) validateKey(ctx context.Context, rawKey string) (*ValidationResult, validation, error) {
 	hash, err := e.hasher.Hash(rawKey)
 	if err != nil {
-		return nil, fmt.Errorf("hash key: %w", err)
+		return nil, validation{result: validationError, cause: err}, fmt.Errorf("hash key: %w", err)
 	}
 
-	var viaPrevious bool
+	var out validation
 	var graceEnds *time.Time
 	k, err := e.store.Keys().GetByHash(ctx, hash)
 	if err != nil {
@@ -185,15 +235,15 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 		// migration closes these rows; this guard covers a store where it
 		// has not run, such as mongo's index-only Store.Migrate.
 		if recErr != nil || rec.OldHint == "" {
-			_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, err)
-			return nil, ErrInvalidKey
+			e.hookDone(ctx, hookKeyValidationFailed, e.hooks.FireKeyValidationFailed(ctx, rawKey, err))
+			return nil, lookupFailed(err, recErr), ErrInvalidKey
 		}
 		k, err = e.store.Keys().Get(ctx, rec.KeyID)
 		if err != nil {
-			_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, err)
-			return nil, ErrInvalidKey
+			e.hookDone(ctx, hookKeyValidationFailed, e.hooks.FireKeyValidationFailed(ctx, rawKey, err))
+			return nil, lookupFailed(err), ErrInvalidKey
 		}
-		viaPrevious = true
+		out.viaPrevious = true
 		ends := rec.GraceEnds
 		graceEnds = &ends
 	}
@@ -203,15 +253,17 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 	// otherwise: a stale full-row write racing a revoke can put State back
 	// and leave RevokedAt set.
 	if k.State != key.StateActive || k.RevokedAt != nil {
-		_ = e.hooks.FireKeyValidationFailed(ctx, rawKey, ErrKeyInactive)
-		return nil, ErrKeyInactive
+		e.hookDone(ctx, hookKeyValidationFailed, e.hooks.FireKeyValidationFailed(ctx, rawKey, ErrKeyInactive))
+		out.result = validationInactive
+		return nil, out, ErrKeyInactive
 	}
 
 	// Check expiration.
 	if k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt) {
-		_ = e.store.Keys().UpdateState(ctx, k.ID, key.StateExpired)
-		_ = e.hooks.FireKeyExpired(ctx, k)
-		return nil, ErrKeyExpired
+		e.tel.operation(opExpire, operationResult(e.store.Keys().UpdateState(ctx, k.ID, key.StateExpired)))
+		e.hookDone(ctx, hookKeyExpired, e.hooks.FireKeyExpired(ctx, k))
+		out.result = validationExpired
+		return nil, out, ErrKeyExpired
 	}
 
 	// Load the policy. A read failure fails closed: carrying on with a nil
@@ -224,7 +276,8 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 		pol, polErr = e.store.Policies().Get(ctx, *k.PolicyID)
 		if polErr != nil {
 			if !errors.Is(polErr, ErrPolicyNotFound) {
-				return nil, fmt.Errorf("load policy: %w", polErr)
+				out.result, out.cause = validationError, polErr
+				return nil, out, fmt.Errorf("load policy: %w", polErr)
 			}
 			pol = nil
 		}
@@ -232,10 +285,10 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 
 	// Rate-limit check.
 	if pol != nil && e.ratelimiter != nil && pol.RateLimit > 0 {
-		allowed, rlErr := e.ratelimiter.Allow(ctx, k.ID.String(), pol.RateLimit, pol.RateLimitWindow)
-		if rlErr != nil || !allowed {
-			_ = e.hooks.FireKeyRateLimited(ctx, k)
-			return nil, ErrRateLimited
+		if !e.allow(ctx, k.ID.String(), pol) {
+			e.hookDone(ctx, hookKeyRateLimited, e.hooks.FireKeyRateLimited(ctx, k))
+			out.result = validationRateLimited
+			return nil, out, ErrRateLimited
 		}
 	}
 
@@ -246,21 +299,46 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 		scopeNames[i] = s.Name
 	}
 
-	// Update last-used timestamp asynchronously.
+	// Update last-used timestamp asynchronously. Nobody waits for it, so a
+	// failure is only counted.
 	go func() {
-		now := time.Now()
-		_ = e.store.Keys().UpdateLastUsed(context.WithoutCancel(ctx), k.ID, now)
+		if luErr := e.store.Keys().UpdateLastUsed(context.WithoutCancel(ctx), k.ID, time.Now()); luErr != nil {
+			e.tel.lastUsedUpdateFailed()
+		}
 	}()
 
-	_ = e.hooks.FireKeyValidated(ctx, k)
+	e.hookDone(ctx, hookKeyValidated, e.hooks.FireKeyValidated(ctx, k))
 
+	out.result = validationOK
 	return &ValidationResult{
 		Key:            k,
 		Scopes:         scopeNames,
 		Policy:         pol,
-		ViaPreviousKey: viaPrevious,
+		ViaPreviousKey: out.viaPrevious,
 		GraceEnds:      graceEnds,
-	}, nil
+	}, out, nil
+}
+
+// allow asks the rate limiter whether the key may make another request. A
+// limiter that fails denies the request, as it always has; the span and
+// keysmith_rate_limit_checks_total tell the failure apart from a real
+// denial. limiterKey is the key's ID, which goes to the limiter and nowhere
+// else.
+func (e *Engine) allow(ctx context.Context, limiterKey string, pol *policy.Policy) bool {
+	ctx, span := startSpan(ctx, spanCheckRateLimit)
+	allowed, err := e.ratelimiter.Allow(ctx, limiterKey, pol.RateLimit, pol.RateLimitWindow)
+	result := rateLimitAllowed
+	switch {
+	case err != nil:
+		result = rateLimitError
+		markError(span, err)
+	case !allowed:
+		result = rateLimitDenied
+	}
+	span.SetAttributes(attrResult.String(result))
+	span.End()
+	e.tel.rateLimitChecked(result)
+	return result == rateLimitAllowed
 }
 
 // RotateKey issues a new raw key for the same key record. The previous raw key
@@ -272,6 +350,13 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 // for example), the rotation is refused with ErrKeyConflict and the key keeps
 // the other write.
 func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, opts ...RotateOption) (*key.CreateResult, error) {
+	ctx, op := e.startOperation(ctx, opRotate, spanRotateKey, attrRotationReason.String(rotationReason(reason)))
+	res, err := e.rotateKey(ctx, keyID, reason, opts...)
+	op.end(err)
+	return res, err
+}
+
+func (e *Engine) rotateKey(ctx context.Context, keyID id.KeyID, reason rotation.Reason, opts ...RotateOption) (*key.CreateResult, error) {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("get key: %w", err)
@@ -304,6 +389,7 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 			return nil, fmt.Errorf("get policy: %w", polErr)
 		}
 	}
+	trace.SpanFromContext(ctx).SetAttributes(attrGraceSeconds.Int64(int64(graceTTL / time.Second)))
 
 	// Generate new key.
 	rawKey, err := e.generator.Generate(k.Prefix, k.Environment)
@@ -365,7 +451,7 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 		return nil, err
 	}
 
-	_ = e.hooks.FireKeyRotated(ctx, k, rec)
+	e.hookDone(ctx, hookKeyRotated, e.hooks.FireKeyRotated(ctx, k, rec))
 
 	return &key.CreateResult{Key: k, RawKey: rawKey}, nil
 }
@@ -375,6 +461,13 @@ func (e *Engine) RotateKey(ctx context.Context, keyID id.KeyID, reason rotation.
 // If the key changes between the read and the write, the revoke is refused
 // with ErrKeyConflict and the caller can read the key again and retry.
 func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) error {
+	ctx, op := e.startOperation(ctx, opRevoke, spanRevokeKey)
+	err := e.revokeKey(ctx, keyID, reason)
+	op.end(err)
+	return err
+}
+
+func (e *Engine) revokeKey(ctx context.Context, keyID id.KeyID, reason string) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return fmt.Errorf("get key: %w", err)
@@ -393,11 +486,13 @@ func (e *Engine) RevokeKey(ctx context.Context, keyID id.KeyID, reason string) e
 	}
 
 	// A revoked key must not be reachable through a previous key either.
-	if _, err := e.store.Rotations().EndGrace(ctx, keyID, now); err != nil {
-		return fmt.Errorf("end grace: %w", err)
+	closed, endErr := e.store.Rotations().EndGrace(ctx, keyID, now)
+	if endErr != nil {
+		return fmt.Errorf("end grace: %w", endErr)
 	}
+	trace.SpanFromContext(ctx).SetAttributes(attrGraceWindowsClosed.Int64(closed))
 
-	_ = e.hooks.FireKeyRevoked(ctx, k, reason)
+	e.hookDone(ctx, hookKeyRevoked, e.hooks.FireKeyRevoked(ctx, k, reason))
 	return nil
 }
 
@@ -420,6 +515,13 @@ func (e *Engine) EndGrace(ctx context.Context, keyID id.KeyID) (int64, error) {
 // version-checked like RevokeKey's, so a key that changed after the read is
 // refused with ErrKeyConflict.
 func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
+	ctx, op := e.startOperation(ctx, opSuspend, spanSuspendKey)
+	err := e.suspendKey(ctx, keyID)
+	op.end(err)
+	return err
+}
+
+func (e *Engine) suspendKey(ctx context.Context, keyID id.KeyID) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return fmt.Errorf("get key: %w", err)
@@ -432,7 +534,7 @@ func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
 	if err := e.store.Keys().UpdateIfVersion(ctx, k, k.Version); err != nil {
 		return fmt.Errorf("suspend key: %w", err)
 	}
-	_ = e.hooks.FireKeySuspended(ctx, k)
+	e.hookDone(ctx, hookKeySuspended, e.hooks.FireKeySuspended(ctx, k))
 	return nil
 }
 
@@ -441,6 +543,13 @@ func (e *Engine) SuspendKey(ctx context.Context, keyID id.KeyID) error {
 // version-checked like RevokeKey's, so a key that changed after the read is
 // refused with ErrKeyConflict.
 func (e *Engine) ReactivateKey(ctx context.Context, keyID id.KeyID) error {
+	ctx, op := e.startOperation(ctx, opReactivate, spanReactivateKey)
+	err := e.reactivateKey(ctx, keyID)
+	op.end(err)
+	return err
+}
+
+func (e *Engine) reactivateKey(ctx context.Context, keyID id.KeyID) error {
 	k, err := e.store.Keys().Get(ctx, keyID)
 	if err != nil {
 		return fmt.Errorf("get key: %w", err)
@@ -453,7 +562,7 @@ func (e *Engine) ReactivateKey(ctx context.Context, keyID id.KeyID) error {
 	if err := e.store.Keys().UpdateIfVersion(ctx, k, k.Version); err != nil {
 		return fmt.Errorf("reactivate key: %w", err)
 	}
-	_ = e.hooks.FireKeyReactivated(ctx, k)
+	e.hookDone(ctx, hookKeyReactivated, e.hooks.FireKeyReactivated(ctx, k))
 	return nil
 }
 
@@ -486,7 +595,7 @@ func (e *Engine) CreatePolicy(ctx context.Context, pol *policy.Policy) error {
 	if err := e.store.Policies().Create(ctx, pol); err != nil {
 		return fmt.Errorf("create policy: %w", err)
 	}
-	_ = e.hooks.FirePolicyCreated(ctx, pol)
+	e.hookDone(ctx, hookPolicyCreated, e.hooks.FirePolicyCreated(ctx, pol))
 	return nil
 }
 
@@ -504,7 +613,7 @@ func (e *Engine) UpdatePolicy(ctx context.Context, pol *policy.Policy) error {
 	if err := e.store.Policies().Update(ctx, pol); err != nil {
 		return fmt.Errorf("update policy: %w", err)
 	}
-	_ = e.hooks.FirePolicyUpdated(ctx, pol)
+	e.hookDone(ctx, hookPolicyUpdated, e.hooks.FirePolicyUpdated(ctx, pol))
 	return nil
 }
 
@@ -544,7 +653,7 @@ func (e *Engine) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
 	if err := e.store.Policies().Delete(ctx, polID); err != nil {
 		return fmt.Errorf("delete policy: %w", err)
 	}
-	_ = e.hooks.FirePolicyDeleted(ctx, polID)
+	e.hookDone(ctx, hookPolicyDeleted, e.hooks.FirePolicyDeleted(ctx, polID))
 	return nil
 }
 
@@ -693,18 +802,52 @@ func (e *Engine) ListRotations(ctx context.Context, filter *rotation.ListFilter)
 // Cleanup
 // ──────────────────────────────────────────────────
 
-// CleanupExpiredKeys finds and marks expired keys.
+// CleanupExpiredKeys finds and marks expired keys. Keysmith never calls it:
+// schedule it from your host.
+//
+// Each run that finds expired keys, or fails to list them, is one root
+// span, expire keys, linked to the span in ctx when there is one. A run
+// that finds nothing starts no span, so a frequent schedule doesn't mint
+// an empty trace every tick.
 func (e *Engine) CleanupExpiredKeys(ctx context.Context) error {
-	keys, err := e.store.Keys().ListExpired(ctx, time.Now())
+	start := time.Now()
+	keys, err := e.store.Keys().ListExpired(ctx, start)
 	if err != nil {
+		_, span := startSweep(ctx, start)
+		markError(span, err)
+		span.End()
 		return fmt.Errorf("list expired keys: %w", err)
 	}
+	if len(keys) == 0 {
+		return nil
+	}
+
+	ctx, span := startSweep(ctx, start)
+	defer span.End()
+	var expired, failed int
 	for _, k := range keys {
-		if err := e.store.Keys().UpdateState(ctx, k.ID, key.StateExpired); err != nil {
-			e.logger.Warn("failed to expire key", log.String("key_id", k.ID.String()), log.Any("error", err))
+		updErr := e.store.Keys().UpdateState(ctx, k.ID, key.StateExpired)
+		e.tel.operation(opExpire, operationResult(updErr))
+		if updErr != nil {
+			failed++
+			e.logger.Warn("failed to expire key", log.String("key_id", k.ID.String()), log.Any("error", updErr))
 			continue
 		}
-		_ = e.hooks.FireKeyExpired(ctx, k)
+		expired++
+		e.hookDone(ctx, hookKeyExpired, e.hooks.FireKeyExpired(ctx, k))
 	}
+	span.SetAttributes(attrKeysExpired.Int(expired), attrKeysFailed.Int(failed))
 	return nil
+}
+
+// startSweep starts the root span of one CleanupExpiredKeys run, back-dated
+// to when the run began. A caller's span, a scheduler's job span for
+// instance, becomes a link rather than the parent, so a run started from a
+// long-lived context never hangs off an old trace.
+func startSweep(ctx context.Context, start time.Time) (context.Context, trace.Span) {
+	opts := []trace.SpanStartOption{trace.WithNewRoot(), trace.WithTimestamp(start)}
+	if parent := trace.SpanContextFromContext(ctx); parent.IsValid() {
+		opts = append(opts, trace.WithLinks(trace.Link{SpanContext: parent}))
+	}
+	return startSpan(ctx, spanExpireKeys, opts...)
 }
