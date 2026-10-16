@@ -826,9 +826,16 @@ func (e *Engine) ListRotations(ctx context.Context, filter *rotation.ListFilter)
 // back, starts no span, so a frequent schedule doesn't mint an empty trace
 // every tick. A run where any key failed to expire with a real error gets
 // an error status carrying the first such error's type.
+//
+// The listing runs before the run's span exists, so it runs with the span
+// stripped from ctx. A scheduler's ctx often comes from an extension's
+// Start, which forge v1.12.9 calls inside a "start <ext>" span that ends at
+// boot; kept, it would hang the listing query's db.client span off that
+// finished trace on every idle tick. Cancellation and values carry over.
 func (e *Engine) CleanupExpiredKeys(ctx context.Context) error {
 	start := time.Now()
-	keys, err := e.store.Keys().ListExpired(ctx, start)
+	listCtx := trace.ContextWithSpanContext(ctx, trace.SpanContext{})
+	keys, err := e.store.Keys().ListExpired(listCtx, start)
 	if err != nil {
 		if !cancelled(err) {
 			_, span := startSweep(ctx, start)

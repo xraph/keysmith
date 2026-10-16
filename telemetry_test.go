@@ -265,6 +265,30 @@ func (b brokenKeys) UpdateLastUsed(ctx context.Context, keyID id.KeyID, at time.
 	return b.Store.UpdateLastUsed(ctx, keyID, at)
 }
 
+// spanSpyKeys records whether the ctx each ListExpired and UpdateState call
+// gets carries a valid span, and which trace it belongs to. Grove starts a
+// db.client span whenever it does.
+type spanSpyKeys struct {
+	key.Store
+	mu           sync.Mutex
+	listSpans    []trace.SpanContext
+	updateTraces []trace.TraceID
+}
+
+func (s *spanSpyKeys) ListExpired(ctx context.Context, before time.Time) ([]*key.Key, error) {
+	s.mu.Lock()
+	s.listSpans = append(s.listSpans, trace.SpanContextFromContext(ctx))
+	s.mu.Unlock()
+	return s.Store.ListExpired(ctx, before)
+}
+
+func (s *spanSpyKeys) UpdateState(ctx context.Context, keyID id.KeyID, state key.State) error {
+	s.mu.Lock()
+	s.updateTraces = append(s.updateTraces, trace.SpanContextFromContext(ctx).TraceID())
+	s.mu.Unlock()
+	return s.Store.UpdateState(ctx, keyID, state)
+}
+
 // errCancelled is a cancellation as a store wraps it.
 var errCancelled = fmt.Errorf("keysmith/postgres: get key: %w", context.Canceled)
 
@@ -623,6 +647,38 @@ func TestCleanupExpiredKeysTrace(t *testing.T) {
 		assert.Equal(t, map[string]any{"keysmith.keys.expired": int64(2), "keysmith.keys.failed": int64(0)}, spanAttrs(sweep))
 		assert.Equal(t, codes.Unset, sweep.Status().Code)
 		assert.InDelta(t, 2, f.counts()["keysmith_key_operations_total{operation=expire,result=ok}"], 0)
+	})
+
+	// A scheduler started from an extension's Start carries forge's "start
+	// <ext>" span, long ended. The listing must not run under it, or every
+	// idle tick hangs a db.client span off the boot trace.
+	t.Run("the listing never runs under the caller's span", func(t *testing.T) {
+		s := memory.New()
+		spy := &spanSpyKeys{Store: s.Keys()}
+		eng, ctx := newEngine(t, failingStore{Store: s, keys: spy})
+		rec := recordSpans(t)
+
+		bootCtx, boot := otel.Tracer("test").Start(ctx, "start keysmith")
+		boot.End()
+		loopCtx, cancel := context.WithCancel(bootCtx)
+		defer cancel()
+		require.True(t, trace.SpanContextFromContext(loopCtx).IsValid(), "the loop ctx still carries the boot span")
+
+		require.NoError(t, eng.CleanupExpiredKeys(loopCtx)) // idle: nothing has expired
+		past := time.Now().Add(-time.Minute)
+		mustCreate(t, eng, ctx, &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, ExpiresAt: &past})
+		require.NoError(t, eng.CleanupExpiredKeys(loopCtx)) // one to expire
+
+		require.Len(t, spy.listSpans, 2)
+		for i, sc := range spy.listSpans {
+			assert.False(t, sc.IsValid(), "listing %d ran under a span", i)
+		}
+		sweep := onlySpan(t, rec, "expire keys")
+		require.Len(t, spy.updateTraces, 1)
+		assert.Equal(t, sweep.SpanContext().TraceID(), spy.updateTraces[0], "the update runs under the run's own span")
+		assert.NotEqual(t, boot.SpanContext().TraceID(), sweep.SpanContext().TraceID())
+		require.Len(t, sweep.Links(), 1)
+		assert.Equal(t, boot.SpanContext().SpanID(), sweep.Links()[0].SpanContext.SpanID(), "the caller's span is still a link")
 	})
 
 	t.Run("a key that fails to expire marks the run", func(t *testing.T) {
