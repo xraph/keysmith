@@ -205,14 +205,23 @@ type validation struct {
 
 // lookupFailed sorts a failed key lookup: a miss on both the current hash
 // and the grace windows is an invalid key, and anything else is a store
-// failure.
+// failure (or a caller that cancelled).
 func lookupFailed(errs ...error) validation {
 	for _, err := range errs {
 		if err != nil && !errors.Is(err, ErrKeyNotFound) && !errors.Is(err, ErrRotationNotFound) {
-			return validation{result: validationError, cause: err}
+			return storeFailed(err)
 		}
 	}
 	return validation{result: validationInvalid}
+}
+
+// storeFailed sorts a read that failed during validation: "cancelled" when
+// the caller's context was cancelled, "error" with the cause otherwise.
+func storeFailed(err error) validation {
+	if cancelled(err) {
+		return validation{result: validationCancelled}
+	}
+	return validation{result: validationError, cause: err}
 }
 
 func (e *Engine) validateKey(ctx context.Context, rawKey string) (*ValidationResult, validation, error) {
@@ -276,7 +285,8 @@ func (e *Engine) validateKey(ctx context.Context, rawKey string) (*ValidationRes
 		pol, polErr = e.store.Policies().Get(ctx, *k.PolicyID)
 		if polErr != nil {
 			if !errors.Is(polErr, ErrPolicyNotFound) {
-				out.result, out.cause = validationError, polErr
+				failed := storeFailed(polErr)
+				out.result, out.cause = failed.result, failed.cause
 				return nil, out, fmt.Errorf("load policy: %w", polErr)
 			}
 			pol = nil
@@ -285,9 +295,12 @@ func (e *Engine) validateKey(ctx context.Context, rawKey string) (*ValidationRes
 
 	// Rate-limit check.
 	if pol != nil && e.ratelimiter != nil && pol.RateLimit > 0 {
-		if !e.allow(ctx, k.ID.String(), pol) {
+		if limit := e.allow(ctx, k.ID.String(), pol); limit != rateLimitAllowed {
 			e.hookDone(ctx, hookKeyRateLimited, e.hooks.FireKeyRateLimited(ctx, k))
 			out.result = validationRateLimited
+			if limit == rateLimitCancelled {
+				out.result = validationCancelled
+			}
 			return nil, out, ErrRateLimited
 		}
 	}
@@ -319,16 +332,18 @@ func (e *Engine) validateKey(ctx context.Context, rawKey string) (*ValidationRes
 	}, out, nil
 }
 
-// allow asks the rate limiter whether the key may make another request. A
-// limiter that fails denies the request, as it always has; the span and
-// keysmith_rate_limit_checks_total tell the failure apart from a real
-// denial. limiterKey is the key's ID, which goes to the limiter and nowhere
-// else.
-func (e *Engine) allow(ctx context.Context, limiterKey string, pol *policy.Policy) bool {
+// allow asks the rate limiter whether the key may make another request and
+// returns its answer as a rate limit result. A limiter that fails denies the
+// request, as it always has; the span and keysmith_rate_limit_checks_total
+// tell the failure apart from a real denial. limiterKey is the key's ID,
+// which goes to the limiter and nowhere else.
+func (e *Engine) allow(ctx context.Context, limiterKey string, pol *policy.Policy) string {
 	ctx, span := startSpan(ctx, spanCheckRateLimit)
 	allowed, err := e.ratelimiter.Allow(ctx, limiterKey, pol.RateLimit, pol.RateLimitWindow)
 	result := rateLimitAllowed
 	switch {
+	case err != nil && cancelled(err):
+		result = rateLimitCancelled
 	case err != nil:
 		result = rateLimitError
 		markError(span, err)
@@ -338,7 +353,7 @@ func (e *Engine) allow(ctx context.Context, limiterKey string, pol *policy.Polic
 	span.SetAttributes(attrResult.String(result))
 	span.End()
 	e.tel.rateLimitChecked(result)
-	return result == rateLimitAllowed
+	return result
 }
 
 // RotateKey issues a new raw key for the same key record. The previous raw key
@@ -807,15 +822,19 @@ func (e *Engine) ListRotations(ctx context.Context, filter *rotation.ListFilter)
 //
 // Each run that finds expired keys, or fails to list them, is one root
 // span, expire keys, linked to the span in ctx when there is one. A run
-// that finds nothing starts no span, so a frequent schedule doesn't mint
-// an empty trace every tick.
+// that finds nothing, or whose caller cancelled it before the listing came
+// back, starts no span, so a frequent schedule doesn't mint an empty trace
+// every tick. A run where any key failed to expire with a real error gets
+// an error status carrying the first such error's type.
 func (e *Engine) CleanupExpiredKeys(ctx context.Context) error {
 	start := time.Now()
 	keys, err := e.store.Keys().ListExpired(ctx, start)
 	if err != nil {
-		_, span := startSweep(ctx, start)
-		markError(span, err)
-		span.End()
+		if !cancelled(err) {
+			_, span := startSweep(ctx, start)
+			markError(span, err)
+			span.End()
+		}
 		return fmt.Errorf("list expired keys: %w", err)
 	}
 	if len(keys) == 0 {
@@ -825,11 +844,16 @@ func (e *Engine) CleanupExpiredKeys(ctx context.Context) error {
 	ctx, span := startSweep(ctx, start)
 	defer span.End()
 	var expired, failed int
+	var firstErr error
 	for _, k := range keys {
 		updErr := e.store.Keys().UpdateState(ctx, k.ID, key.StateExpired)
-		e.tel.operation(opExpire, operationResult(updErr))
+		result := operationResult(updErr)
+		e.tel.operation(opExpire, result)
 		if updErr != nil {
 			failed++
+			if firstErr == nil && result == resultError {
+				firstErr = updErr
+			}
 			e.logger.Warn("failed to expire key", log.String("key_id", k.ID.String()), log.Any("error", updErr))
 			continue
 		}
@@ -837,6 +861,9 @@ func (e *Engine) CleanupExpiredKeys(ctx context.Context) error {
 		e.hookDone(ctx, hookKeyExpired, e.hooks.FireKeyExpired(ctx, k))
 	}
 	span.SetAttributes(attrKeysExpired.Int(expired), attrKeysFailed.Int(failed))
+	if firstErr != nil {
+		markError(span, firstErr)
+	}
 	return nil
 }
 

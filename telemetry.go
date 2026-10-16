@@ -79,6 +79,7 @@ const (
 	validationInactive    = "inactive"
 	validationExpired     = "expired"
 	validationRateLimited = "rate_limited"
+	validationCancelled   = "cancelled"
 	validationError       = "error"
 )
 
@@ -95,19 +96,21 @@ const (
 // Values of the result label on keysmith_key_operations_total, and of
 // keysmith.result on the lifecycle spans.
 const (
-	resultOK       = "ok"
-	resultNotFound = "not_found"
-	resultRejected = "rejected"
-	resultConflict = "conflict"
-	resultError    = "error"
+	resultOK        = "ok"
+	resultNotFound  = "not_found"
+	resultRejected  = "rejected"
+	resultConflict  = "conflict"
+	resultCancelled = "cancelled"
+	resultError     = "error"
 )
 
 // Values of the result label on keysmith_rate_limit_checks_total, and of
 // keysmith.result on the check rate limit span.
 const (
-	rateLimitAllowed = "allowed"
-	rateLimitDenied  = "denied"
-	rateLimitError   = "error"
+	rateLimitAllowed   = "allowed"
+	rateLimitDenied    = "denied"
+	rateLimitCancelled = "cancelled"
+	rateLimitError     = "error"
 )
 
 // Values of the event label on keysmith_hook_errors_total, and of
@@ -165,13 +168,23 @@ func errorType(err error) string {
 	return fmt.Sprintf("%T", err)
 }
 
+// cancelled reports whether err comes from a caller that cancelled its
+// context, most often a client that went away mid-request. It is counted
+// apart from "error" so disconnects don't inflate the failure ratio. A
+// deadline is not a cancellation: a timeout usually means something keysmith
+// waited on was slow, so it stays an error.
+func cancelled(err error) bool { return errors.Is(err, context.Canceled) }
+
 // operationResult sorts the error a lifecycle operation returned into the
-// bounded result label. A missing entity, a refused transition and a lost
-// race are answers, not failures; only "error" marks the span.
+// bounded result label. A missing entity, a refused transition, a lost race
+// and a cancelled caller are answers, not failures; only "error" marks the
+// span.
 func operationResult(err error) string {
 	switch {
 	case err == nil:
 		return resultOK
+	case cancelled(err):
+		return resultCancelled
 	case errors.Is(err, ErrKeyConflict):
 		return resultConflict
 	case errors.Is(err, ErrKeyNotFound), errors.Is(err, ErrPolicyNotFound), errors.Is(err, ErrScopeNotFound):

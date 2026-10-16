@@ -211,35 +211,62 @@ func (l limiter) Allow(context.Context, string, int, time.Duration) (bool, error
 func (limiter) Remaining(context.Context, string, int, time.Duration) (int, error) { return 0, nil }
 
 // brokenKeys fails the key reads and writes it is told to, the way a store
-// that lost its connection would. Its error quotes a value, as driver errors
-// do, so a test can check that text never reaches telemetry.
+// that lost its connection would. By default it fails with errLeaky, whose
+// text quotes a value, as driver errors do, so a test can check that text
+// never reaches telemetry. Set err to fail with something else.
 type brokenKeys struct {
 	key.Store
-	getByHash, listExpired, updateLastUsed bool
+	get, getByHash, listExpired, updateLastUsed bool
+	updateStateOf                               map[string]bool // key IDs whose UpdateState fails
+	err                                         error
 }
 
 var errLeaky = errors.New("injected: connection lost while reading alice@example.com")
 
+func (b brokenKeys) fail() error {
+	if b.err != nil {
+		return b.err
+	}
+	return errLeaky
+}
+
+func (b brokenKeys) Get(ctx context.Context, keyID id.KeyID) (*key.Key, error) {
+	if b.get {
+		return nil, b.fail()
+	}
+	return b.Store.Get(ctx, keyID)
+}
+
 func (b brokenKeys) GetByHash(ctx context.Context, hash string) (*key.Key, error) {
 	if b.getByHash {
-		return nil, errLeaky
+		return nil, b.fail()
 	}
 	return b.Store.GetByHash(ctx, hash)
 }
 
 func (b brokenKeys) ListExpired(ctx context.Context, before time.Time) ([]*key.Key, error) {
 	if b.listExpired {
-		return nil, errLeaky
+		return nil, b.fail()
 	}
 	return b.Store.ListExpired(ctx, before)
 }
 
+func (b brokenKeys) UpdateState(ctx context.Context, keyID id.KeyID, state key.State) error {
+	if b.updateStateOf[keyID.String()] {
+		return b.fail()
+	}
+	return b.Store.UpdateState(ctx, keyID, state)
+}
+
 func (b brokenKeys) UpdateLastUsed(ctx context.Context, keyID id.KeyID, at time.Time) error {
 	if b.updateLastUsed {
-		return errLeaky
+		return b.fail()
 	}
 	return b.Store.UpdateLastUsed(ctx, keyID, at)
 }
+
+// errCancelled is a cancellation as a store wraps it.
+var errCancelled = fmt.Errorf("keysmith/postgres: get key: %w", context.Canceled)
 
 // failingHook fails every key-created hook.
 type failingHook struct{}
@@ -380,6 +407,31 @@ func TestValidateKeyOutcomes(t *testing.T) {
 			result:  "error",
 			failed:  true,
 		},
+		{
+			// A client that hung up is not an outage, so it stays out of
+			// result="error".
+			name: "caller cancels during lookup",
+			prepare: func(t *testing.T, f *fakeMetrics) setup {
+				s := memory.New()
+				plain, ctx := newEngine(t, s)
+				r := mustCreate(t, plain, ctx, nil)
+				eng, _ := newEngine(t, failingStore{Store: s, keys: brokenKeys{Store: s.Keys(), getByHash: true, err: errCancelled}}, keysmith.WithMetrics(f))
+				return setup{eng, ctx, r.RawKey}
+			},
+			wantErr: keysmith.ErrInvalidKey,
+			result:  "cancelled",
+		},
+		{
+			name: "caller cancels during the rate limit check",
+			prepare: func(t *testing.T, f *fakeMetrics) setup {
+				eng, ctx := newEngine(t, memory.New(), keysmith.WithMetrics(f), keysmith.WithRateLimiter(limiter{err: errCancelled}))
+				return setup{eng, ctx, limitedKey(t, eng, ctx).RawKey}
+			},
+			wantErr:   keysmith.ErrRateLimited,
+			result:    "cancelled",
+			limit:     "cancelled",
+			alsoCount: []string{"keysmith_rate_limit_checks_total{result=cancelled}"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -485,6 +537,10 @@ func TestLifecycleOperationResults(t *testing.T) {
 	_, err = broken.RotateKey(ctx, third.Key.ID, rotation.ReasonManual)
 	require.Error(t, err)
 
+	// A caller that cancelled is neither.
+	gone, _ := newEngine(t, failingStore{Store: s, keys: brokenKeys{Store: s.Keys(), get: true, err: errCancelled}}, keysmith.WithMetrics(f))
+	require.ErrorIs(t, gone.SuspendKey(ctx, third.Key.ID), context.Canceled)
+
 	type got struct{ name, result string }
 	var spans []got
 	for _, sp := range ksSpans(rec) {
@@ -508,6 +564,7 @@ func TestLifecycleOperationResults(t *testing.T) {
 		{"suspend key", "conflict"}, // the one that lost
 		{"create key", "ok"},
 		{"rotate key", "error"},
+		{"suspend key", "cancelled"},
 	}, spans)
 
 	var revoked sdktrace.ReadOnlySpan
@@ -531,6 +588,7 @@ func TestLifecycleOperationResults(t *testing.T) {
 		"keysmith_key_operations_total{operation=rotate,result=error}":         1,
 		"keysmith_key_operations_total{operation=revoke,result=ok}":            1,
 		"keysmith_key_operations_total{operation=revoke,result=rejected}":      1,
+		"keysmith_key_operations_total{operation=suspend,result=cancelled}":    1,
 	} {
 		assert.InDelta(t, want, counts[k], 0, k)
 	}
@@ -565,6 +623,42 @@ func TestCleanupExpiredKeysTrace(t *testing.T) {
 		assert.Equal(t, map[string]any{"keysmith.keys.expired": int64(2), "keysmith.keys.failed": int64(0)}, spanAttrs(sweep))
 		assert.Equal(t, codes.Unset, sweep.Status().Code)
 		assert.InDelta(t, 2, f.counts()["keysmith_key_operations_total{operation=expire,result=ok}"], 0)
+	})
+
+	t.Run("a key that fails to expire marks the run", func(t *testing.T) {
+		f := newFakeMetrics()
+		s := memory.New()
+		plain, ctx := newEngine(t, s)
+		past := time.Now().Add(-time.Minute)
+		in := &keysmith.CreateKeyInput{Name: "k", Prefix: "sk", Environment: key.EnvLive, ExpiresAt: &past}
+		bad := mustCreate(t, plain, ctx, in)
+		mustCreate(t, plain, ctx, in)
+		eng, _ := newEngine(t, failingStore{Store: s, keys: brokenKeys{Store: s.Keys(), updateStateOf: map[string]bool{bad.Key.ID.String(): true}}}, keysmith.WithMetrics(f))
+		rec := recordSpans(t)
+
+		require.NoError(t, eng.CleanupExpiredKeys(ctx), "one key failing doesn't fail the run")
+
+		sweep := onlySpan(t, rec, "expire keys")
+		assert.Equal(t, map[string]any{
+			"keysmith.keys.expired": int64(1),
+			"keysmith.keys.failed":  int64(1),
+			"error.type":            "*errors.errorString",
+		}, spanAttrs(sweep))
+		assert.Equal(t, codes.Error, sweep.Status().Code)
+		assert.Equal(t, "*errors.errorString", sweep.Status().Description)
+		require.Len(t, sweep.Events(), 1)
+		assert.Equal(t, map[string]any{"exception.type": "*errors.errorString"}, attrsOf(sweep.Events()[0].Attributes))
+		counts := f.counts()
+		assert.InDelta(t, 1, counts["keysmith_key_operations_total{operation=expire,result=ok}"], 0)
+		assert.InDelta(t, 1, counts["keysmith_key_operations_total{operation=expire,result=error}"], 0)
+	})
+
+	t.Run("a cancelled listing starts no span", func(t *testing.T) {
+		s := memory.New()
+		eng, ctx := newEngine(t, failingStore{Store: s, keys: brokenKeys{Store: s.Keys(), listExpired: true, err: errCancelled}})
+		rec := recordSpans(t)
+		require.ErrorIs(t, eng.CleanupExpiredKeys(ctx), context.Canceled)
+		assert.Empty(t, ksSpans(rec))
 	})
 
 	t.Run("a failed listing is recorded", func(t *testing.T) {
