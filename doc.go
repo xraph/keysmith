@@ -47,6 +47,15 @@
 //   - observability — increments go-utils metric counters for each lifecycle event
 //   - warden_hook — syncs scopes as Warden permissions and assigns roles to API keys
 //
+// # Telemetry
+//
+// The engine starts OpenTelemetry spans on the global tracer provider
+// (validate key, create key, rotate key and the other key state changes),
+// and records metrics when you pass [WithMetrics]. The Forge extension
+// passes app.Metrics(), so in a Forge app both are on with no setup. Spans
+// and metric labels carry bounded enums only, never key material, IDs or
+// tenants.
+//
 // # Forge Integration
 //
 // The [extension] package adapts Keysmith as a [forge.Extension], registering the

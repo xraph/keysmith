@@ -110,6 +110,7 @@ Issuing an API key is easy. Running them for years is the part that hurts: you n
 | Multi-tenant isolation | Tenant and app from Forge's scope or from `keysmith.WithTenant` |
 | Your database | PostgreSQL, SQLite and MongoDB through [Grove](https://github.com/xraph/grove), and an in-memory store |
 | Hooks for audit and metrics | Lifecycle hooks with ready-made audit, metrics and [Warden](https://github.com/xraph/warden) bridges |
+| To see what it's doing | OpenTelemetry spans for validation and every key state change, and six metrics on Forge's `/_/metrics`, with no key material, IDs or tenants on any of them |
 
 ## Protect HTTP routes
 
@@ -169,7 +170,7 @@ Three come with the library:
 | Package | Constructor | What it does |
 | --- | --- | --- |
 | `audit_hook` | `audithook.New(recorder)` | Sends lifecycle events to any `Recorder`, such as an adapter over [Chronicle](https://github.com/xraph/chronicle) |
-| `observability` | `observability.NewMetricsExtension()` | Counts lifecycle events as go-utils metrics |
+| `observability` | `observability.NewMetricsExtension()` | Counts lifecycle events as unlabelled go-utils counters. The engine's own metrics (below) cover the same ground |
 | `warden_hook` | `wardenhook.New(bridge)` | Keeps Warden role assignments for API key subjects in sync |
 
 The audit and Warden hooks each declare a small local interface, so Keysmith never imports Chronicle or Warden.
@@ -209,6 +210,27 @@ app := forge.NewApp(forge.AppConfig{
 List Grove first, because Keysmith looks up the database during `Register`. Without a Grove database, pass a store yourself with `keysmith.WithEngineOptions(keysmith.WithStore(...))` from the root package. [Authsome](https://github.com/xraph/authsome) takes the same engine through `authsome.WithKeysmith`.
 
 The REST API has no authentication of its own. Put your auth middleware in front of the `/keysmith` group, or turn the routes off with `disable_routes` and call the engine from your own handlers.
+
+## Tracing and metrics
+
+In a Forge app there's nothing to set up. Forge installs the tracer provider, and the extension hands the engine `app.Metrics()`, so you get these spans under each request's server span and these series on `/_/metrics`:
+
+| Span | Attributes |
+| --- | --- |
+| `validate key`, with a `check rate limit` child when a limiter runs | `keysmith.result`, `keysmith.validation.via_previous_key` |
+| `create key`, `rotate key`, `revoke key`, `suspend key`, `reactivate key` | `keysmith.result`, plus the rotation reason and grace window on `rotate key` |
+| `expire keys`, one root span per `CleanupExpiredKeys` run that finds work | `keysmith.keys.expired`, `keysmith.keys.failed` |
+
+| Metric | Labels |
+| --- | --- |
+| `forge_keysmith_key_validations_total` | `result` (`ok`, `invalid`, `inactive`, `expired`, `rate_limited`, `cancelled`, `error`), `via_previous_key` |
+| `forge_keysmith_key_validation_duration_seconds` | `result` |
+| `forge_keysmith_key_operations_total` | `operation` (`create`, `rotate`, `revoke`, `suspend`, `reactivate`, `expire`), `result` (`ok`, `not_found`, `rejected`, `conflict`, `cancelled`, `error`) |
+| `forge_keysmith_rate_limit_checks_total` | `result` (`allowed`, `denied`, `cancelled`, `error`) |
+| `forge_keysmith_hook_errors_total` | `event`, one per lifecycle hook |
+| `forge_keysmith_last_used_updates_failed_total` | none |
+
+Without Forge, pass `keysmith.WithMetrics(m)` with any go-utils metrics sink and set a global tracer provider. A store outage during validation still answers `ErrInvalidKey`, but it's recorded as `result="error"`, so it won't hide among bad keys. A client that hangs up is `cancelled`, so it doesn't count as an outage. The [observability docs](https://www.xraph.com/docs/keysmith/subsystems/observability) list every attribute and label value.
 
 ## Configuration
 
@@ -255,7 +277,7 @@ Every route carries OpenAPI metadata, so it shows up in your Forge app's spec. T
 | Topic | Where |
 | --- | --- |
 | Getting started | [Getting started](https://www.xraph.com/docs/keysmith/getting-started), [architecture](https://www.xraph.com/docs/keysmith/architecture), [full example](https://www.xraph.com/docs/keysmith/guides/full-example) |
-| Subsystems | [Keys](https://www.xraph.com/docs/keysmith/subsystems/keys), [policies](https://www.xraph.com/docs/keysmith/subsystems/policies), [scopes](https://www.xraph.com/docs/keysmith/subsystems/scopes), [rotation](https://www.xraph.com/docs/keysmith/subsystems/rotation), [usage](https://www.xraph.com/docs/keysmith/subsystems/usage), [plugins](https://www.xraph.com/docs/keysmith/subsystems/plugins) |
+| Subsystems | [Keys](https://www.xraph.com/docs/keysmith/subsystems/keys), [policies](https://www.xraph.com/docs/keysmith/subsystems/policies), [scopes](https://www.xraph.com/docs/keysmith/subsystems/scopes), [rotation](https://www.xraph.com/docs/keysmith/subsystems/rotation), [usage](https://www.xraph.com/docs/keysmith/subsystems/usage), [plugins](https://www.xraph.com/docs/keysmith/subsystems/plugins), [observability](https://www.xraph.com/docs/keysmith/subsystems/observability) |
 | Storage | [PostgreSQL](https://www.xraph.com/docs/keysmith/stores/postgres), [SQLite](https://www.xraph.com/docs/keysmith/stores/sqlite), [MongoDB](https://www.xraph.com/docs/keysmith/stores/mongo), [memory](https://www.xraph.com/docs/keysmith/stores/memory), [custom store](https://www.xraph.com/docs/keysmith/guides/custom-store) |
 | Integration | [Forge extension](https://www.xraph.com/docs/keysmith/guides/forge-extension), [middleware](https://www.xraph.com/docs/keysmith/guides/middleware), [multi-tenancy](https://www.xraph.com/docs/keysmith/concepts/multi-tenancy) |
 

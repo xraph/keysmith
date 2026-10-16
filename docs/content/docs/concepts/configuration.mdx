@@ -29,6 +29,7 @@ eng, err := keysmith.NewEngine(
     keysmith.WithRateLimiter(limiter),
     keysmith.WithExtension(auditPlugin),
     keysmith.WithLogger(logger),
+    keysmith.WithMetrics(metrics),
 )
 ```
 
@@ -40,6 +41,7 @@ eng, err := keysmith.NewEngine(
 | `WithRateLimiter(RateLimiter)` | Rate limiter for validation. No default, and without one a policy's `RateLimit` is never checked. |
 | `WithExtension(plugin.Plugin)` | Registers a lifecycle plugin. |
 | `WithLogger(log.Logger)` | A `github.com/xraph/go-utils/log` logger. Defaults to a no-op logger. |
+| `WithMetrics(metrics.Metrics)` | A `github.com/xraph/go-utils/metrics` sink for the engine's [metrics](/docs/subsystems/observability). Defaults to none, which records nothing. The Forge extension passes `app.Metrics()`. |
 
 ## Key format
 

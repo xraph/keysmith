@@ -61,6 +61,8 @@ func (s *SlackNotifier) OnKeyRevoked(ctx context.Context, k *key.Key, reason str
 | Policy deleted | `plugin.PolicyDeleted` | `OnPolicyDeleted(ctx, id.PolicyID) error` |
 | Shutdown | `plugin.Shutdown` | `OnShutdown(ctx) error` |
 
+Hooks run in the order you registered them. When one returns an error, the hooks after it don't run for that event, and the operation that fired it carries on as if nothing happened. Only `OnShutdown`'s error comes back to you, from `Stop`. You can still see the others: each one adds to `keysmith_hook_errors_total` and leaves a `hook failed` event on the current span, if there is one (see [observability](/docs/subsystems/observability)).
+
 ## Built-in plugins
 
 ### Audit Hook
@@ -83,14 +85,14 @@ eng, _ := keysmith.NewEngine(
 
 ### Observability Metrics
 
-Increments go-utils metric counters for each lifecycle event.
+Increments go-utils metric counters for each lifecycle event. The engine records labelled metrics of its own when you pass `keysmith.WithMetrics`, and the Forge extension does that for you, so you'll only want this plugin for its older counter names. See [observability](/docs/subsystems/observability).
 
 ```go
 import "github.com/xraph/keysmith/observability"
 
 eng, _ := keysmith.NewEngine(
     keysmith.WithStore(store),
-    keysmith.WithExtension(observability.NewMetricsExtension()),
+    keysmith.WithExtension(observability.NewMetricsExtensionWithFactory(factory)),
 )
 ```
 
