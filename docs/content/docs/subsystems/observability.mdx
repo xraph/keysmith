@@ -52,17 +52,17 @@ These are the values the enum attributes can take:
 
 | Attribute | On | Values |
 | --- | --- | --- |
-| `keysmith.result` | `validate key` | `ok`, `invalid`, `inactive`, `expired`, `rate_limited`, `error` |
-| `keysmith.result` | `check rate limit` | `allowed`, `denied`, `error` |
-| `keysmith.result` | `create key`, `rotate key`, `revoke key`, `suspend key`, `reactivate key` | `ok`, `not_found`, `rejected`, `conflict`, `error` |
+| `keysmith.result` | `validate key` | `ok`, `invalid`, `inactive`, `expired`, `rate_limited`, `cancelled`, `error` |
+| `keysmith.result` | `check rate limit` | `allowed`, `denied`, `cancelled`, `error` |
+| `keysmith.result` | `create key`, `rotate key`, `revoke key`, `suspend key`, `reactivate key` | `ok`, `not_found`, `rejected`, `conflict`, `cancelled`, `error` |
 | `keysmith.rotation.reason` | `rotate key` | `scheduled`, `manual`, `compromise`, `policy`, or `other` for any reason outside those four |
 | `keysmith.validation.via_previous_key` | `validate key` | `true` when the caller presented a rotated key inside its grace window, `false` otherwise |
 
-A refused key, a refused state change, a missing key and a lost race are answers, so they leave the span's status alone. Only `error` sets an error status. The status description and `error.type` name the Go type of the innermost error (`*pgconn.PgError`, `context.DeadlineExceeded`), and an `exception` event carries that type as `exception.type` and nothing else. The error's text never goes on a span, because a store's message can quote the values it was given.
+A refused key, a refused state change, a missing key and a lost race are answers, so they leave the span's status alone. So does `cancelled`, which means the caller's context was cancelled (`context.Canceled`), most often a client that hung up mid-request. A deadline is different: `context.DeadlineExceeded` counts as `error`, because a timeout usually means something keysmith waited on was slow. Only `error` sets an error status. The status description and `error.type` name the Go type of the innermost error (`*pgconn.PgError`, `context.DeadlineExceeded`), and an `exception` event carries that type as `exception.type` and nothing else. The error's text never goes on a span, because a store's message can quote the values it was given.
 
-A lifecycle hook that returns an error doesn't fail the operation that fired it. It leaves a `hook failed` event on that operation's span, with `keysmith.hook.event` (the values are listed under `keysmith_hook_errors_total` below) and `exception.type`.
+A lifecycle hook that returns an error doesn't fail the operation that fired it. It leaves a `hook failed` event on the current span, if there is one, with `keysmith.hook.event` (the values are listed under `keysmith_hook_errors_total` below) and `exception.type`. For key operations that's the operation's own span. `CreatePolicy`, `UpdatePolicy` and `DeletePolicy` have no keysmith span, so their hook events land on whatever span your context carries, such as forge's route span.
 
-`CleanupExpiredKeys` is meant to run on a schedule you own. Each run that finds expired keys, or fails to list them, is one root span back-dated to the start of the run. If your context carries a span (a scheduler's job span, say), it becomes a link and not the parent, so a run started from a long-lived context never hangs off an old trace. A run that finds nothing starts no span.
+`CleanupExpiredKeys` is meant to run on a schedule you own. Each run that finds expired keys, or fails to list them, is one root span back-dated to the start of the run. If your context carries a span (a scheduler's job span, say), it becomes a link and not the parent, so a run started from a long-lived context never hangs off an old trace. A run that finds nothing starts no span, and neither does one whose listing was cancelled. One key failing doesn't stop the run, but if any key fails to expire with a real error, the span gets an error status and an `exception` event carrying the first such error's type, next to the `keysmith.keys.failed` count.
 
 `ValidateKey` writes the key's last-used time in a goroutine nobody waits for. Its query span is a child of `validate key` that ends after its parent has.
 
@@ -83,11 +83,11 @@ The names below are what you scrape from a Forge app, with forge's `forge_` name
 
 | Metric | Label | Values |
 | --- | --- | --- |
-| validations, validation duration | `result` | `ok`, `invalid`, `inactive`, `expired`, `rate_limited`, `error` |
+| validations, validation duration | `result` | `ok`, `invalid`, `inactive`, `expired`, `rate_limited`, `cancelled`, `error` |
 | validations | `via_previous_key` | `true`, `false` |
 | key operations | `operation` | `create`, `rotate`, `revoke`, `suspend`, `reactivate`, `expire` |
-| key operations | `result` | `ok`, `not_found`, `rejected`, `conflict`, `error` |
-| rate limit checks | `result` | `allowed`, `denied`, `error` |
+| key operations | `result` | `ok`, `not_found`, `rejected`, `conflict`, `cancelled`, `error` |
+| rate limit checks | `result` | `allowed`, `denied`, `cancelled`, `error` |
 | hook errors | `event` | `key_created`, `key_create_failed`, `key_validated`, `key_validation_failed`, `key_rotated`, `key_revoked`, `key_suspended`, `key_reactivated`, `key_expired`, `key_rate_limited`, `policy_created`, `policy_updated`, `policy_deleted` |
 
 The validation histogram's buckets run from 0.5 ms to 2.5 s: 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1 and 2.5 seconds.
@@ -95,7 +95,8 @@ The validation histogram's buckets run from 0.5 ms to 2.5 s: 0.0005, 0.001, 0.00
 A few of the values need a word:
 
 - A validation's `error` is a failure on keysmith's side: the store failed while looking the key up or reading its policy, or the hasher failed. When the lookup fails, the caller still gets `ErrInvalidKey`, as it always has. The metric is where a database outage stops looking like a run of bad keys.
-- `rate_limited` covers both a limiter that said no and a limiter that failed, because both deny the request. `forge_keysmith_rate_limit_checks_total` tells them apart.
+- `rate_limited` covers both a limiter that said no and a limiter that failed, because both deny the request. So a limiter outage shows up as `rate_limited` on `forge_keysmith_key_validations_total`, not as `error`, and the error-share query below doesn't include it. Watch `forge_keysmith_rate_limit_checks_total{result="error"}` for that.
+- `cancelled` keeps client disconnects out of `error`. A validation whose caller cancelled during the lookup, the policy read or the limiter call is counted as `cancelled`, whatever it returned.
 - `expire` counts keys keysmith moved to the expired state, both the ones `ValidateKey` catches past their expiry and the ones `CleanupExpiredKeys` sweeps up.
 - `not_found` means the key, its policy or a scope it asked for doesn't exist. `rejected` is `ErrInvalidStateTransition`, `ErrKeyLifetimeExceeded` or `ErrScopeNotAllowed`. `conflict` is `ErrKeyConflict`, a write that lost a race.
 - The engine throws hook errors and failed last-used writes away, so these two counters are the only place you'll see them. When one hook fails, the hooks registered after it don't run for that event, and the counter goes up once.
@@ -114,7 +115,8 @@ histogram_quantile(0.99,
 # Clients still on a key you rotated
 sum(rate(forge_keysmith_key_validations_total{via_previous_key="true"}[1h]))
 
-# A rate limiter that is failing, not limiting
+# A rate limiter that is failing, not limiting. Its failures count as
+# rate_limited above, so the first query never sees them.
 sum(rate(forge_keysmith_rate_limit_checks_total{result="error"}[5m]))
 ```
 

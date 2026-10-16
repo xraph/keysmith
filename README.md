@@ -223,14 +223,14 @@ In a Forge app there's nothing to set up. Forge installs the tracer provider, an
 
 | Metric | Labels |
 | --- | --- |
-| `forge_keysmith_key_validations_total` | `result` (`ok`, `invalid`, `inactive`, `expired`, `rate_limited`, `error`), `via_previous_key` |
+| `forge_keysmith_key_validations_total` | `result` (`ok`, `invalid`, `inactive`, `expired`, `rate_limited`, `cancelled`, `error`), `via_previous_key` |
 | `forge_keysmith_key_validation_duration_seconds` | `result` |
-| `forge_keysmith_key_operations_total` | `operation` (`create`, `rotate`, `revoke`, `suspend`, `reactivate`, `expire`), `result` (`ok`, `not_found`, `rejected`, `conflict`, `error`) |
-| `forge_keysmith_rate_limit_checks_total` | `result` (`allowed`, `denied`, `error`) |
+| `forge_keysmith_key_operations_total` | `operation` (`create`, `rotate`, `revoke`, `suspend`, `reactivate`, `expire`), `result` (`ok`, `not_found`, `rejected`, `conflict`, `cancelled`, `error`) |
+| `forge_keysmith_rate_limit_checks_total` | `result` (`allowed`, `denied`, `cancelled`, `error`) |
 | `forge_keysmith_hook_errors_total` | `event`, one per lifecycle hook |
 | `forge_keysmith_last_used_updates_failed_total` | none |
 
-Without Forge, pass `keysmith.WithMetrics(m)` with any go-utils metrics sink and set a global tracer provider. A store outage during validation still answers `ErrInvalidKey`, but it's recorded as `result="error"`, so it won't hide among bad keys. The [observability docs](https://www.xraph.com/docs/keysmith/subsystems/observability) list every attribute and label value.
+Without Forge, pass `keysmith.WithMetrics(m)` with any go-utils metrics sink and set a global tracer provider. A store outage during validation still answers `ErrInvalidKey`, but it's recorded as `result="error"`, so it won't hide among bad keys. A client that hangs up is `cancelled`, so it doesn't count as an outage. The [observability docs](https://www.xraph.com/docs/keysmith/subsystems/observability) list every attribute and label value.
 
 ## Configuration
 

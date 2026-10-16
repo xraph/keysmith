@@ -77,7 +77,7 @@ Tests use testify (`require` and `assert`) on top of `testing`.
 
 Span names, attribute keys, metric names and every label value live as constants in `telemetry.go`, and `docs/content/docs/subsystems/observability.mdx` lists them all. Change one and you change the other. Spans come from `startSpan` (the tracer `github.com/xraph/keysmith`, looked up per call). Metrics are declared once in `newTelemetry` with `forge.CounterVec` and friends on the sink from `WithMetrics`, and a nil `*telemetry` records nothing, so every recording method checks for nil.
 
-Nothing that identifies a key or a person goes on a span or a label: not the raw key, its hash, hint or ID, not a tenant, app, owner or anything a caller typed. A failure goes on a span through `markError`, which records the error's Go type and never its text. `TestTelemetryCarriesNoPersonalDataOrKeyMaterial` feeds an email address through every path; extend it when you add a span. Refusals (invalid key, refused transition, not found, conflict) are results, not errors, and leave the span status alone.
+Nothing that identifies a key or a person goes on a span or a label: not the raw key, its hash, hint or ID, not a tenant, app, owner or anything a caller typed. A failure goes on a span through `markError`, which records the error's Go type and never its text. `TestTelemetryCarriesNoPersonalDataOrKeyMaterial` feeds an email address through every path; extend it when you add a span. Refusals (invalid key, refused transition, not found, conflict) and a cancelled caller (`context.Canceled`, result `cancelled`) are results, not errors, and leave the span status alone. A deadline is still an error.
 
 ### Lint rules that bite
 
