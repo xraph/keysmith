@@ -96,4 +96,5 @@ func WithKeyGenerator(g KeyGenerator) Option
 func WithRateLimiter(r RateLimiter) Option
 func WithExtension(p plugin.Plugin) Option
 func WithLogger(l log.Logger) Option // github.com/xraph/go-utils/log
+func WithMetrics(m metrics.Metrics) Option // github.com/xraph/go-utils/metrics; nil records nothing
 ```

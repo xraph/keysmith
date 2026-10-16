@@ -43,7 +43,7 @@ Each postgres and mongo subtest gets a database of its own, dropped again when t
 
 | Path | What lives there |
 |---|---|
-| root (`package keysmith`) | `Engine` (`engine.go`), `NewEngine` and its options, `Hasher`, `KeyGenerator`, `RateLimiter`, sentinel errors |
+| root (`package keysmith`) | `Engine` (`engine.go`), `NewEngine` and its options, `Hasher`, `KeyGenerator`, `RateLimiter`, sentinel errors, spans and metrics (`telemetry.go`) |
 | `key/`, `policy/`, `scope/`, `usage/`, `rotation/` | One subsystem each, with its entities and its own `Store` interface |
 | `store/` | `store.Store`, plus the not-found and conflict sentinels every backend returns |
 | `store/memory`, `store/sqlite`, `store/postgres`, `store/mongo` | The four backends. `sqlite.DSN` builds a DSN with the busy timeout and foreign keys set |
@@ -72,6 +72,12 @@ The Forge extension is `extension.New(opts...)`, embedding `*forge.BaseExtension
 Logging uses `github.com/xraph/go-utils/log`. If you don't pass a logger you get `log.NewNoopLogger()`. Fields are typed, like `log.String("key_id", ...)` and `log.Any("error", err)`, and inside the extension you log with `forge.F` fields.
 
 Tests use testify (`require` and `assert`) on top of `testing`.
+
+### Telemetry
+
+Span names, attribute keys, metric names and every label value live as constants in `telemetry.go`, and `docs/content/docs/subsystems/observability.mdx` lists them all. Change one and you change the other. Spans come from `startSpan` (the tracer `github.com/xraph/keysmith`, looked up per call). Metrics are declared once in `newTelemetry` with `forge.CounterVec` and friends on the sink from `WithMetrics`, and a nil `*telemetry` records nothing, so every recording method checks for nil.
+
+Nothing that identifies a key or a person goes on a span or a label: not the raw key, its hash, hint or ID, not a tenant, app, owner or anything a caller typed. A failure goes on a span through `markError`, which records the error's Go type and never its text. `TestTelemetryCarriesNoPersonalDataOrKeyMaterial` feeds an email address through every path; extend it when you add a span. Refusals (invalid key, refused transition, not found, conflict) are results, not errors, and leave the span status alone.
 
 ### Lint rules that bite
 
