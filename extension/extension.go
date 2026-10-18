@@ -125,7 +125,11 @@ func (e *Extension) init(fapp forge.App) error {
 		)
 	}
 
-	opts := make([]keysmith.Option, 0, len(e.keysmithOpts)+1)
+	// Metrics go to the app's collector, so they land on /_/metrics. They
+	// come before the caller's engine options, so
+	// WithEngineOptions(keysmith.WithMetrics(...)) still wins.
+	opts := make([]keysmith.Option, 0, len(e.keysmithOpts)+2)
+	opts = append(opts, keysmith.WithMetrics(e.Metrics()))
 	opts = append(opts, e.keysmithOpts...)
 	opts = append(opts, keysmith.WithLogger(logger))
 

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	log "github.com/xraph/go-utils/log"
+	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/keysmith/plugin"
 	"github.com/xraph/keysmith/store"
@@ -29,6 +30,17 @@ func WithExtension(x plugin.Plugin) Option { return func(e *Engine) { e.hooks.Re
 
 // WithLogger sets the logger.
 func WithLogger(l log.Logger) Option { return func(e *Engine) { e.logger = l } }
+
+// WithMetrics records keysmith's metrics on m: validations and their
+// duration, lifecycle operations, rate limiter checks, failed hooks and
+// failed last-used writes. In a Forge app pass app.Metrics() and the series
+// land on /_/metrics with forge's namespace in front
+// (forge_keysmith_key_validations_total). Keysmith's Forge extension does
+// this for you. A nil m, the default, records nothing.
+//
+// Spans need no option: the engine starts them on the global tracer
+// provider, which forge.New installs.
+func WithMetrics(m gometrics.Metrics) Option { return func(e *Engine) { e.metrics = m } }
 
 type rotateConfig struct {
 	grace     *time.Duration

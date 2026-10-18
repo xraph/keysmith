@@ -16,6 +16,7 @@ Keysmith is a library, not a service. You bring your own database and process li
 - Usage analytics: per-request usage recording with daily and monthly aggregation. Track which keys are being used, how often, and by whom.
 - Rotation with grace periods: zero-downtime key rotation with configurable grace windows. Old keys remain valid during the grace period while clients migrate.
 - Plugin system: opt-in lifecycle hooks for audit trails, metrics, and authorization sync. Three built-in plugins: audit hook, observability metrics, and Warden bridge.
+- Tracing and metrics: OpenTelemetry spans for validation and every key state change, and six metrics on Forge's `/_/metrics`, with no key material, IDs or tenants on either. See [observability](/docs/subsystems/observability).
 - Forge integration: mounts as a `forge.Extension` with DI registration, REST API routes, and auto-migration. The REST API has no authentication of its own, so put yours in front of it.
 - Multi-tenant: automatic tenant scoping via Forge scope or standalone context helpers. Keys, policies, scopes and usage are written and listed per tenant. Validation looks a key up by hash alone and tells you its tenant.
 
