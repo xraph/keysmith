@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xraph/keysmith"
 	"github.com/xraph/keysmith/key"
@@ -47,5 +49,37 @@ func TestValidateKeyHandlerSeparatesUnknownKeyFromOutage(t *testing.T) {
 	rec := send(t, New(broken, nil).Handler(), http.MethodPost, "/v1/keys/validate", body, http.StatusInternalServerError, "store outage")
 	if strings.Contains(rec.Body.String(), "10.0.0.7") {
 		t.Fatalf("500 body echoes the store error: %s", rec.Body.String())
+	}
+}
+
+// A request whose context is cancelled or past its deadline gets a 5xx, even
+// when the key is unknown. The store's miss must not leak out as a 404 or a
+// 401: the engine never judged the key.
+func TestValidateKeyHandlerCancelledContextIs5xx(t *testing.T) {
+	eng, err := keysmith.NewEngine(keysmith.WithStore(memory.New()))
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	h := New(eng, nil).Handler()
+
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for name, ctx := range map[string]context.Context{"cancelled": cancelled, "deadline exceeded": expired} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/keys/validate",
+				strings.NewReader(`{"raw_key":"sk_live_unknownunknownunknown"}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code < 500 || rec.Code > 599 {
+				t.Fatalf("status %d, want 5xx, body %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "not found") {
+				t.Fatalf("body carries a not-found verdict: %s", rec.Body.String())
+			}
+		})
 	}
 }

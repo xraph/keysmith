@@ -23,15 +23,15 @@ Keysmith defines sentinel errors in the root `keysmith` package. Use `errors.Is`
 | `ErrScopeNameTaken` | A scope with that name already exists in the tenant |
 | `ErrScopeHasChildren` | You tried to delete a scope other scopes name as their parent |
 | `ErrScopeAllowedByPolicy` | You tried to delete a scope a policy still allows |
-
-## Store outages and cancelled requests
-
-`ValidateKey` only returns `ErrInvalidKey` when the key store answers and says the key isn't there. If the store can't answer (the database is down, a query fails), or the request's context is cancelled or past its deadline, you get an error that wraps the cause and isn't `ErrInvalidKey`: `errors.Is` matches the store's own error, `context.Canceled` or `context.DeadlineExceeded`. Treat it as retryable. An MQTT broker or HTTP gateway should answer it with a server error, not "bad credentials", because many clients stop retrying on a rejected credential. `middleware.APIKeyAuth` answers it with a 503 and a fixed body, and the admin API's validate route answers with a 500. Neither fires `KeyValidationFailed`, since the key was never judged.
 | `ErrScopeNotAllowed` | `CreateKey` or `AssignScopes` named a scope the key's policy doesn't allow |
 | `ErrKeyLifetimeExceeded` | `CreateKey` got an expiry beyond the policy's `MaxKeyLifetime` |
 | `ErrRotationNotFound` | No rotation record matches |
 
 Some sentinels are declared but never returned by the engine today: `ErrKeyRevoked` and `ErrKeySuspended` (a revoked or suspended key gives you `ErrKeyInactive`), and `ErrQuotaExceeded`, `ErrIPNotAllowed` and `ErrOriginNotAllowed`, because quotas, IP allowlists and origin allowlists aren't enforced yet. See [Policies](/docs/subsystems/policies).
+
+## Store outages and cancelled requests
+
+`ValidateKey` only returns `ErrInvalidKey` when the key store answers and says the key isn't there. If the store can't answer (the database is down, a query fails), or the request's context is cancelled or past its deadline, you get an error that wraps the cause and isn't `ErrInvalidKey`: `errors.Is` matches the store's own error, `context.Canceled` or `context.DeadlineExceeded`. Treat it as retryable. An MQTT broker or HTTP gateway should answer it with a server error, not "bad credentials", because many clients stop retrying on a rejected credential. `middleware.APIKeyAuth` answers it with a 503 and a fixed body, and the admin API's validate route answers with a 500. Neither fires `KeyValidationFailed`, since the key was never judged.
 
 ## Usage
 

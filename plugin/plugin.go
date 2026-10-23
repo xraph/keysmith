@@ -8,7 +8,7 @@
 //   - [KeyCreated] — fired after a key is successfully created
 //   - [KeyCreateFailed] — fired when key creation fails
 //   - [KeyValidated] — fired after a key passes validation
-//   - [KeyValidationFailed] — fired when key validation fails (not on a store outage)
+//   - [KeyValidationFailed]: fired when key validation fails (not on a store outage)
 //   - [KeyRotated] — fired after a key is rotated
 //   - [KeyRevoked] — fired when a key is permanently revoked
 //   - [KeySuspended] — fired when a key is temporarily suspended

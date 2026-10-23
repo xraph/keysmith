@@ -179,10 +179,17 @@ func (e *Engine) createKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 // returns, or nil when err is the store's not-found result (notFound), which
 // means the key is simply unknown. A cancelled or expired ctx wins over
 // whatever the store reported, so the caller sees context.Canceled or
-// context.DeadlineExceeded. Anything else is a store failure and is wrapped,
+// context.DeadlineExceeded, and a not-found result under such a ctx is
+// dropped rather than passed on. Anything else is a store failure and is wrapped,
 // so callers can tell it from ErrInvalidKey with errors.Is.
 func lookupFailure(ctx context.Context, err, notFound error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
+		// A miss seen under a dead context says nothing about the key, so
+		// the not-found sentinel stays out of the chain: callers map it to
+		// a 404 or a rejection. Any other store error is kept for diagnosis.
+		if errors.Is(err, notFound) {
+			return fmt.Errorf("keysmith: lookup key: %w", ctxErr)
+		}
 		return fmt.Errorf("keysmith: lookup key: %w", errors.Join(ctxErr, err))
 	}
 	if errors.Is(err, notFound) {

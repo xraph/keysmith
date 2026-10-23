@@ -206,6 +206,8 @@ func TestValidateKeyCancelledContext(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 		assert.NotErrorIs(t, err, keysmith.ErrInvalidKey)
+		assert.NotErrorIs(t, err, keysmith.ErrKeyNotFound, "a miss seen under a cancelled context is not a not-found verdict")
+		assert.NotErrorIs(t, err, keysmith.ErrRotationNotFound)
 	})
 
 	t.Run("deadline", func(t *testing.T) {
