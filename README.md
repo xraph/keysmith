@@ -331,6 +331,6 @@ Without `KEYSMITH_TEST_PG_DSN` or `KEYSMITH_TEST_MONGO_URI`, the PostgreSQL and 
 
 ## License
 
-See the [Keysmith repository](https://github.com/xraph/keysmith) for license terms.
+MIT. See [LICENSE](LICENSE).
 
 Keysmith is part of the [Forge](https://github.com/xraph/forge) forgery stack, built by [Rex Raphael](https://github.com/juicycleff) and [contributors](https://github.com/xraph/keysmith/graphs/contributors).
