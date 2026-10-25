@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/xraph/forge/extensions/dashboard"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 	"github.com/xraph/forge/extensions/dashboard/contract/idempotency"
@@ -23,123 +22,91 @@ import (
 	"github.com/xraph/keysmith/store"
 )
 
-// idemStore adapts forge's in-memory idempotency store to the dispatcher the
-// way forge's dashboard extension does, and keeps a copy of every entry the
-// dispatcher writes so a test can read what was stored. idemStore and
-// claimingIdemStore mirror forge v1.12.2's unexported adaptIdempotencyStore,
-// idempotencyAdapter and claimingIdempotencyAdapter
-// (extensions/dashboard/extension.go). If forge changes that wiring, change
-// these to match, or these tests stop testing what a host runs.
-type idemStore struct {
-	inner idempotency.Store
+// recordingStore wraps forge's in-memory idempotency store and keeps a copy
+// of every entry written to it, so a test can read what was stored. It sits
+// under dashboard.AdaptIdempotencyStore, the adapter forge's dashboard
+// extension wires its own dispatcher with, so these tests run the host's
+// wiring and not a copy of it. It is a Claimer like the store it wraps, so
+// the adapter hands the dispatcher a claimer and the claim path runs.
+type recordingStore struct {
+	inner *idempotency.InMemoryStore
 
 	// enter, when set, runs at the start of every Lookup and Claim the
 	// dispatcher makes, so a test can tell when a dispatch reached the store.
 	enter func()
 
 	mu     sync.Mutex
-	stored []dispatcher.IdempotencyCached
+	stored []idempotency.Cached
 }
 
-// claimingIdemStore is idemStore over a store that can also claim, so the
-// dispatcher's type assertion finds a claimer only when forge's would.
-type claimingIdemStore struct {
-	*idemStore
+var _ idempotency.Claimer = (*recordingStore)(nil)
 
-	claimer idempotency.Claimer
+func (s *recordingStore) record(c idempotency.Cached) {
+	s.mu.Lock()
+	s.stored = append(s.stored, c)
+	s.mu.Unlock()
 }
 
-// adaptIdem picks the adapter the way adaptIdempotencyStore does.
-func adaptIdem(a *idemStore) dispatcher.IdempotencyStore {
-	if c, ok := a.inner.(idempotency.Claimer); ok {
-		return &claimingIdemStore{idemStore: a, claimer: c}
+func (s *recordingStore) Lookup(ctx context.Context, key, identity string) (*idempotency.Cached, bool) {
+	if s.enter != nil {
+		s.enter()
 	}
-	return a
+	return s.inner.Lookup(ctx, key, identity)
 }
 
-func (a *idemStore) record(c dispatcher.IdempotencyCached) {
-	a.mu.Lock()
-	a.stored = append(a.stored, c)
-	a.mu.Unlock()
+func (s *recordingStore) Store(ctx context.Context, key, identity string, c idempotency.Cached) error {
+	s.record(c)
+	return s.inner.Store(ctx, key, identity, c)
 }
 
-func (a *idemStore) Lookup(ctx context.Context, key, identity string) (*dispatcher.IdempotencyCached, bool) {
-	if a.enter != nil {
-		a.enter()
+func (s *recordingStore) Claim(ctx context.Context, key, identity string) (idempotency.Claim, error) {
+	if s.enter != nil {
+		s.enter()
 	}
-	c, ok := a.inner.Lookup(ctx, key, identity)
-	if !ok {
-		return nil, false
+	claim, err := s.inner.Claim(ctx, key, identity)
+	if err != nil || claim.End == nil {
+		return claim, err
 	}
-	return &dispatcher.IdempotencyCached{Status: c.Status, WireBody: c.WireBody, StoredAt: c.StoredAt, TTL: c.TTL}, true
-}
-
-func (a *idemStore) Store(ctx context.Context, key, identity string, c dispatcher.IdempotencyCached) error {
-	a.record(c)
-	return a.inner.Store(ctx, key, identity, idempotency.Cached{
-		Status: c.Status, WireBody: c.WireBody, StoredAt: c.StoredAt, TTL: c.TTL,
-	})
-}
-
-func (a *claimingIdemStore) Claim(ctx context.Context, key, identity string) (dispatcher.IdempotencyClaim, error) {
-	if a.enter != nil {
-		a.enter()
-	}
-	claim, err := a.claimer.Claim(ctx, key, identity)
-	if errors.Is(err, idempotency.ErrClaimHeld) {
-		return dispatcher.IdempotencyClaim{}, fmt.Errorf("%w: %w", dispatcher.ErrIdempotencyClaimHeld, err)
-	}
-	if err != nil {
-		return dispatcher.IdempotencyClaim{}, err
-	}
-
-	var out dispatcher.IdempotencyClaim
-	if c := claim.Cached; c != nil {
-		out.Cached = &dispatcher.IdempotencyCached{Status: c.Status, WireBody: c.WireBody, StoredAt: c.StoredAt, TTL: c.TTL}
-	}
-	if end := claim.End; end != nil {
-		out.End = func(ctx context.Context, c *dispatcher.IdempotencyCached) error {
-			var err error
-			if c == nil {
-				err = end(ctx, nil)
-			} else {
-				a.record(*c)
-				err = end(ctx, &idempotency.Cached{Status: c.Status, WireBody: c.WireBody, StoredAt: c.StoredAt, TTL: c.TTL})
-			}
-			if errors.Is(err, idempotency.ErrClaimLost) {
-				return fmt.Errorf("%w: %w", dispatcher.ErrIdempotencyClaimLost, err)
-			}
-			return err
+	end := claim.End
+	claim.End = func(ctx context.Context, c *idempotency.Cached) error {
+		if c != nil {
+			s.record(*c)
 		}
+		return end(ctx, c)
 	}
-	return out, nil
+	return claim, nil
 }
 
 // entry reads back what the real store holds for key under the dispatcher's
 // identity for principal() and intent.
-func (a *idemStore) entry(t *testing.T, key, intent string) *idempotency.Cached {
+func (s *recordingStore) entry(t *testing.T, key, intent string) *idempotency.Cached {
 	t.Helper()
 	// "user_1:"+intent mirrors forge's principalIdentity (dispatcher.go):
 	// the principal's subject, a colon, then the intent.
-	c, ok := a.inner.Lookup(context.Background(), key, "user_1:"+intent)
+	c, ok := s.inner.Lookup(context.Background(), key, "user_1:"+intent)
 	require.True(t, ok, "no idempotency entry for %s", intent)
 	return c
 }
 
-// assertNeverHolds fails if any entry the dispatcher stored carries raw.
-func (a *idemStore) assertNeverHolds(t *testing.T, raw string) {
+// assertNeverHolds fails if the dispatcher stored nothing, or if any entry it
+// stored carries raw.
+func (s *recordingStore) assertNeverHolds(t *testing.T, raw string) {
 	t.Helper()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for i, c := range a.stored {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	require.NotEmpty(t, s.stored, "the dispatcher stored no idempotency entry")
+	for i, c := range s.stored {
 		assert.False(t, bytes.Contains(c.WireBody, []byte(raw)), "stored entry %d holds the raw key", i)
 	}
 }
 
-func idemDispatcher(t *testing.T, deps Deps, opts ...dispatcher.Option) (*dispatcher.Dispatcher, *idemStore) {
+func idemDispatcher(t *testing.T, deps Deps, opts ...dispatcher.Option) (*dispatcher.Dispatcher, *recordingStore) {
 	t.Helper()
-	s := &idemStore{inner: idempotency.NewInMemoryStore()}
-	opts = append([]dispatcher.Option{dispatcher.WithIdempotencyStore(adaptIdem(s))}, opts...)
+	s := &recordingStore{inner: idempotency.NewInMemoryStore()}
+	adapted := dashboard.AdaptIdempotencyStore(s)
+	_, claims := adapted.(dispatcher.IdempotencyClaimer)
+	require.True(t, claims, "the adapter must hand the dispatcher a claimer")
+	opts = append([]dispatcher.Option{dispatcher.WithIdempotencyStore(adapted)}, opts...)
 	d := dispatcher.NewWithOptions(nil, opts...)
 	require.NoError(t, Register(d, dashcontract.NewRegistry(), dashcontract.NewWardenRegistry(), deps))
 	return d, s
@@ -367,6 +334,9 @@ func TestKeysCreateOverlapRunsTheHandlerOnce(t *testing.T) {
 		r2 := receive(t, secondDone, "the second keys.create")
 		require.Error(t, r2.err, "the overlapping keys.create ran its handler too")
 		assert.Equal(t, dashcontract.CodeConflict, codeOf(t, r2.err))
+		var ce *dashcontract.Error
+		require.ErrorAs(t, r2.err, &ce)
+		assert.Contains(t, []any{dispatcher.ReasonStillRunning, dispatcher.ReasonAlreadyRan}, ce.Details[dispatcher.ReasonDetail])
 		assert.NotContains(t, r2.err.Error(), first.RawKey)
 		assert.Empty(t, r2.data)
 
@@ -402,6 +372,7 @@ func TestKeysCreateOverlapAnswersStillRunning(t *testing.T) {
 		var ce *dashcontract.Error
 		require.ErrorAs(t, err, &ce)
 		assert.True(t, ce.Retryable)
+		assert.Equal(t, dispatcher.ReasonStillRunning, ce.Details[dispatcher.ReasonDetail])
 		assert.Contains(t, ce.Message, "still running")
 		assert.Empty(t, data)
 
