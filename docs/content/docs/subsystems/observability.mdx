@@ -94,7 +94,7 @@ The validation histogram's buckets run from 0.5 ms to 2.5 s: 0.0005, 0.001, 0.00
 
 A few of the values need a word:
 
-- A validation's `error` is a failure on keysmith's side: the store failed while looking the key up or reading its policy, or the hasher failed. When the lookup fails, the caller still gets `ErrInvalidKey`, as it always has. The metric is where a database outage stops looking like a run of bad keys.
+- A validation's `error` is a failure on keysmith's side: the store failed while looking the key up or reading its policy, or the hasher failed. When the lookup fails, the caller gets the store's error back, not `ErrInvalidKey` (see [Error Handling](/docs/concepts/errors)), and the metric counts it here, so a database outage doesn't look like a run of bad keys.
 - `rate_limited` covers both a limiter that said no and a limiter that failed, because both deny the request. So a limiter outage shows up as `rate_limited` on `forge_keysmith_key_validations_total`, not as `error`, and the error-share query below doesn't include it. Watch `forge_keysmith_rate_limit_checks_total{result="error"}` for that.
 - `cancelled` keeps client disconnects out of `error`. A validation whose caller cancelled during the lookup, the policy read or the limiter call is counted as `cancelled`, whatever it returned.
 - `expire` counts keys keysmith moved to the expired state, both the ones `ValidateKey` catches past their expiry and the ones `CleanupExpiredKeys` sweeps up.

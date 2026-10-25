@@ -9,7 +9,7 @@ Keysmith defines sentinel errors in the root `keysmith` package. Use `errors.Is`
 
 | Error | Returned when |
 | ----- | ------------- |
-| `ErrInvalidKey` | `ValidateKey` gets a key that matches no current key and no key in an open rotation grace window, or a malformed one |
+| `ErrInvalidKey` | `ValidateKey` gets a key that matches no current key and no key in an open rotation grace window, or a malformed one. It is never returned for a key store failure |
 | `ErrKeyInactive` | `ValidateKey` gets a key that is revoked, suspended or otherwise not active |
 | `ErrKeyExpired` | `ValidateKey` gets a key past its expiry |
 | `ErrRateLimited` | `ValidateKey` finds the key over its policy's rate limit (only with a `RateLimiter` configured) |
@@ -23,6 +23,10 @@ Keysmith defines sentinel errors in the root `keysmith` package. Use `errors.Is`
 | `ErrScopeNameTaken` | A scope with that name already exists in the tenant |
 | `ErrScopeHasChildren` | You tried to delete a scope other scopes name as their parent |
 | `ErrScopeAllowedByPolicy` | You tried to delete a scope a policy still allows |
+
+## Store outages and cancelled requests
+
+`ValidateKey` only returns `ErrInvalidKey` when the key store answers and says the key isn't there. If the store can't answer (the database is down, a query fails), or the request's context is cancelled or past its deadline, you get an error that wraps the cause and isn't `ErrInvalidKey`: `errors.Is` matches the store's own error, `context.Canceled` or `context.DeadlineExceeded`. Treat it as retryable. An MQTT broker or HTTP gateway should answer it with a server error, not "bad credentials", because many clients stop retrying on a rejected credential. `middleware.APIKeyAuth` answers it with a 503 and a fixed body, and the admin API's validate route answers with a 500. Neither fires `KeyValidationFailed`, since the key was never judged.
 | `ErrScopeNotAllowed` | `CreateKey` or `AssignScopes` named a scope the key's policy doesn't allow |
 | `ErrKeyLifetimeExceeded` | `CreateKey` got an expiry beyond the policy's `MaxKeyLifetime` |
 | `ErrRotationNotFound` | No rotation record matches |

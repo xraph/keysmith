@@ -175,8 +175,31 @@ func (e *Engine) createKey(ctx context.Context, input *CreateKeyInput) (*key.Cre
 	return &key.CreateResult{Key: k, RawKey: rawKey}, nil
 }
 
+// lookupFailure turns a failed key-store lookup into the error ValidateKey
+// returns, or nil when err is the store's not-found result (notFound), which
+// means the key is simply unknown. A cancelled or expired ctx wins over
+// whatever the store reported, so the caller sees context.Canceled or
+// context.DeadlineExceeded. Anything else is a store failure and is wrapped,
+// so callers can tell it from ErrInvalidKey with errors.Is.
+func lookupFailure(ctx context.Context, err, notFound error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("keysmith: lookup key: %w", errors.Join(ctxErr, err))
+	}
+	if errors.Is(err, notFound) {
+		return nil
+	}
+	return fmt.Errorf("keysmith: lookup key: %w", err)
+}
+
 // ValidateKey validates a raw API key and returns the key record if valid.
 // This is the hot path — optimized for speed.
+//
+// ErrInvalidKey means the key is not known. If the key store cannot answer,
+// or ctx is cancelled or past its deadline, ValidateKey returns an error
+// that wraps the cause (a store error, context.Canceled or
+// context.DeadlineExceeded) and is not ErrInvalidKey, and it does not fire
+// the KeyValidationFailed hook. Callers should answer such an error with a
+// retryable 5xx, not a 401.
 func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationResult, error) {
 	start := time.Now()
 	ctx, span := startSpan(ctx, spanValidateKey)
@@ -194,25 +217,23 @@ func (e *Engine) ValidateKey(ctx context.Context, rawKey string) (*ValidationRes
 
 // validation is what ValidateKey reports to its span and metrics. cause is
 // the failure behind result "error". It is kept apart from the returned
-// error because a store failure while looking the key up is still answered
-// with ErrInvalidKey, so a host can't tell an outage from a bad key; the
-// telemetry can.
+// error, which wraps it, so the span records the store's own error type and
+// not keysmith's wrapper.
 type validation struct {
 	result      string
 	viaPrevious bool
 	cause       error
 }
 
-// lookupFailed sorts a failed key lookup: a miss on both the current hash
-// and the grace windows is an invalid key, and anything else is a store
-// failure (or a caller that cancelled).
-func lookupFailed(errs ...error) validation {
-	for _, err := range errs {
-		if err != nil && !errors.Is(err, ErrKeyNotFound) && !errors.Is(err, ErrRotationNotFound) {
-			return storeFailed(err)
-		}
+// lookupFailed sorts a lookup that lookupFailure refused to call a miss. A
+// done ctx is the cause whatever the store said, as it is for the returned
+// error, so a caller that hung up reads "cancelled" and one that ran out of
+// time reads "error". Otherwise the store's error is the cause.
+func lookupFailed(ctx context.Context, err error) validation {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return storeFailed(ctxErr)
 	}
-	return validation{result: validationInvalid}
+	return storeFailed(err)
 }
 
 // storeFailed sorts a read that failed during validation: "cancelled" when
@@ -234,23 +255,41 @@ func (e *Engine) validateKey(ctx context.Context, rawKey string) (*ValidationRes
 	var graceEnds *time.Time
 	k, err := e.store.Keys().GetByHash(ctx, hash)
 	if err != nil {
+		// Only a miss says the key does not exist. A store that cannot
+		// answer (an outage, a cancelled request) must not read as an
+		// invalid key, or a caller treats a retryable fault as a
+		// permanent refusal.
+		if lookupErr := lookupFailure(ctx, err, store.ErrKeyNotFound); lookupErr != nil {
+			return nil, lookupFailed(ctx, err), lookupErr
+		}
+
 		// The hash is not any key's current hash. It may still be the hash a
 		// key had before a rotation whose grace window is open.
 		rec, recErr := e.store.Rotations().GetInGraceByOldHash(ctx, hash, time.Now())
+		if recErr != nil {
+			if lookupErr := lookupFailure(ctx, recErr, store.ErrRotationNotFound); lookupErr != nil {
+				return nil, lookupFailed(ctx, recErr), lookupErr
+			}
+			e.hookDone(ctx, hookKeyValidationFailed, e.hooks.FireKeyValidationFailed(ctx, rawKey, err))
+			return nil, validation{result: validationInvalid}, ErrInvalidKey
+		}
 		// A record with no OldHint was written before the grace fix, when
 		// RotateKey recorded a window on every rotation (compromise ones
 		// too) but killed the old key at once. That window was never
 		// honoured, so it must not open now. The close_legacy_grace_windows
 		// migration closes these rows; this guard covers a store where it
 		// has not run, such as mongo's index-only Store.Migrate.
-		if recErr != nil || rec.OldHint == "" {
+		if rec.OldHint == "" {
 			e.hookDone(ctx, hookKeyValidationFailed, e.hooks.FireKeyValidationFailed(ctx, rawKey, err))
-			return nil, lookupFailed(err, recErr), ErrInvalidKey
+			return nil, validation{result: validationInvalid}, ErrInvalidKey
 		}
 		k, err = e.store.Keys().Get(ctx, rec.KeyID)
 		if err != nil {
+			if lookupErr := lookupFailure(ctx, err, store.ErrKeyNotFound); lookupErr != nil {
+				return nil, lookupFailed(ctx, err), lookupErr
+			}
 			e.hookDone(ctx, hookKeyValidationFailed, e.hooks.FireKeyValidationFailed(ctx, rawKey, err))
-			return nil, lookupFailed(err), ErrInvalidKey
+			return nil, validation{result: validationInvalid}, ErrInvalidKey
 		}
 		out.viaPrevious = true
 		ends := rec.GraceEnds

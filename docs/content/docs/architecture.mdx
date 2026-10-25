@@ -74,7 +74,7 @@ ctx := keysmith.WithTenant(ctx, "my-app", "tenant-1")
 Each operation resolves the requested resource using scope values from context:
 
 - `CreateKey` checks the scopes exist (and the policy allows them), generates a raw key, hashes it with SHA-256, stores the hash, fires `KeyCreated` hooks
-- `ValidateKey` hashes the incoming raw key, looks up the hash (then any open rotation grace window), checks state and expiry, checks the policy's rate limit when a `RateLimiter` is set, fires `KeyValidated` or `KeyValidationFailed`
+- `ValidateKey` hashes the incoming raw key, looks up the hash (then any open rotation grace window), checks state and expiry, checks the policy's rate limit when a `RateLimiter` is set, fires `KeyValidated` or `KeyValidationFailed` (a store outage or a cancelled context returns a wrapped error instead and fires neither, so it never reads as `ErrInvalidKey`)
 - `RotateKey` generates a new raw key, swaps the key's hash (the key keeps its ID and `active` state), records the old hash with its grace window, fires `KeyRotated`
 - `RevokeKey` transitions the key to `revoked` state, fires `KeyRevoked`
 

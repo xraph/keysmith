@@ -230,7 +230,7 @@ In a Forge app there's nothing to set up. Forge installs the tracer provider, an
 | `forge_keysmith_hook_errors_total` | `event`, one per lifecycle hook |
 | `forge_keysmith_last_used_updates_failed_total` | none |
 
-Without Forge, pass `keysmith.WithMetrics(m)` with any go-utils metrics sink and set a global tracer provider. A store outage during validation still answers `ErrInvalidKey`, but it's recorded as `result="error"`, so it won't hide among bad keys. A client that hangs up is `cancelled`, so it doesn't count as an outage. The [observability docs](https://www.xraph.com/docs/keysmith/subsystems/observability) list every attribute and label value.
+Without Forge, pass `keysmith.WithMetrics(m)` with any go-utils metrics sink and set a global tracer provider. A store outage during validation is recorded as `result="error"`, so it won't hide among bad keys, and the caller gets the store's error back, not `ErrInvalidKey`. A client that hangs up is `cancelled`, so it doesn't count as an outage. The [observability docs](https://www.xraph.com/docs/keysmith/subsystems/observability) list every attribute and label value.
 
 ## Configuration
 

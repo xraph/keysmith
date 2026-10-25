@@ -417,8 +417,8 @@ func TestValidateKeyOutcomes(t *testing.T) {
 			alsoCount: []string{"keysmith_rate_limit_checks_total{result=error}"},
 		},
 		{
-			// The caller still gets ErrInvalidKey, as before. The telemetry
-			// is where an outage stops looking like a run of bad keys.
+			// The caller gets the store's error, not ErrInvalidKey, and the
+			// span records it unwrapped.
 			name: "store fails",
 			prepare: func(t *testing.T, f *fakeMetrics) setup {
 				s := memory.New()
@@ -427,7 +427,7 @@ func TestValidateKeyOutcomes(t *testing.T) {
 				eng, _ := newEngine(t, failingStore{Store: s, keys: brokenKeys{Store: s.Keys(), getByHash: true}}, keysmith.WithMetrics(f))
 				return setup{eng, ctx, r.RawKey}
 			},
-			wantErr: keysmith.ErrInvalidKey,
+			wantErr: errLeaky,
 			result:  "error",
 			failed:  true,
 		},
@@ -442,7 +442,7 @@ func TestValidateKeyOutcomes(t *testing.T) {
 				eng, _ := newEngine(t, failingStore{Store: s, keys: brokenKeys{Store: s.Keys(), getByHash: true, err: errCancelled}}, keysmith.WithMetrics(f))
 				return setup{eng, ctx, r.RawKey}
 			},
-			wantErr: keysmith.ErrInvalidKey,
+			wantErr: context.Canceled,
 			result:  "cancelled",
 		},
 		{
@@ -814,7 +814,7 @@ func TestTelemetryCarriesNoPersonalDataOrKeyMaterial(t *testing.T) {
 
 	broken, _ := newEngine(t, failingStore{Store: s, keys: brokenKeys{Store: s.Keys(), getByHash: true, listExpired: true}}, keysmith.WithMetrics(f))
 	_, err = broken.ValidateKey(ctx, rotated.RawKey)
-	require.ErrorIs(t, err, keysmith.ErrInvalidKey)
+	require.ErrorIs(t, err, errLeaky)
 	require.Error(t, broken.CleanupExpiredKeys(ctx))
 
 	k, err := eng.GetKey(ctx, created.Key.ID)

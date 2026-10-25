@@ -8,7 +8,7 @@
 //   - [KeyCreated] — fired after a key is successfully created
 //   - [KeyCreateFailed] — fired when key creation fails
 //   - [KeyValidated] — fired after a key passes validation
-//   - [KeyValidationFailed] — fired when key validation fails
+//   - [KeyValidationFailed] — fired when key validation fails (not on a store outage)
 //   - [KeyRotated] — fired after a key is rotated
 //   - [KeyRevoked] — fired when a key is permanently revoked
 //   - [KeySuspended] — fired when a key is temporarily suspended
@@ -73,7 +73,9 @@ type KeyValidated interface {
 	OnKeyValidated(ctx context.Context, k *key.Key) error
 }
 
-// KeyValidationFailed is called when key validation fails.
+// KeyValidationFailed is called when key validation fails: the key is unknown
+// or inactive. It is not called when the key store cannot answer or the
+// context is cancelled, because the key was never judged.
 type KeyValidationFailed interface {
 	OnKeyValidationFailed(ctx context.Context, rawKey string, err error) error
 }

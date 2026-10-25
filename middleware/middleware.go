@@ -32,22 +32,35 @@ func APIKeyAuth(eng *keysmith.Engine) func(http.Handler) http.Handler {
 
 			result, err := eng.ValidateKey(r.Context(), rawKey)
 			if err != nil {
-				code := http.StatusUnauthorized
-				switch {
-				case errors.Is(err, keysmith.ErrRateLimited):
-					code = http.StatusTooManyRequests
-				case errors.Is(err, keysmith.ErrKeyExpired),
-					errors.Is(err, keysmith.ErrKeyRevoked),
-					errors.Is(err, keysmith.ErrKeySuspended):
-					code = http.StatusForbidden
-				}
-				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), code)
+				writeValidationError(w, err)
 				return
 			}
 
 			ctx := context.WithValue(r.Context(), contextKey{}, result)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+// writeValidationError answers a failed ValidateKey. The caller's credentials
+// are at fault only for the errors keysmith names: an unknown or inactive key
+// is a 401, an expired, revoked or suspended one a 403, a rate limit a 429.
+// Anything else (a key store that is down, a cancelled request) is not the
+// caller's doing, so it is a 503 with a fixed body. The store's error text
+// can carry hostnames and addresses, so it stays out of the response.
+func writeValidationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, keysmith.ErrRateLimited):
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusTooManyRequests)
+	case errors.Is(err, keysmith.ErrKeyExpired),
+		errors.Is(err, keysmith.ErrKeyRevoked),
+		errors.Is(err, keysmith.ErrKeySuspended):
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusForbidden)
+	case errors.Is(err, keysmith.ErrInvalidKey),
+		errors.Is(err, keysmith.ErrKeyInactive):
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusUnauthorized)
+	default:
+		http.Error(w, `{"error":"key validation unavailable"}`, http.StatusServiceUnavailable)
 	}
 }
 
