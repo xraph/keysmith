@@ -44,13 +44,15 @@ pgStore := postgres.New(pgdriver.Unwrap(db))
 
 ## Migrations
 
-`Migrate` runs the schema statements in order on every call. They're plain Go string constants in `store/postgres/migrations.go`, not `go:embed`ed files: the `.sql` files under `store/postgres/migrations/` are kept for reference and aren't read at runtime. Run it on startup:
+Run `Migrate` on startup:
 
 ```go
 if err := pgStore.Migrate(ctx); err != nil {
     log.Fatal(err)
 }
 ```
+
+`Migrate` runs the grove migration group `postgres.Migrations` through grove's orchestrator. It takes grove's migration lock first (a Postgres advisory lock), applies whatever `grove_migrations` doesn't record yet, and writes each record in the same transaction as the migration's statements. When several nodes start together against one database they take turns: the first applies the schema, and the rest find nothing left to do. You can call it on every start.
 
 This creates six tables:
 
@@ -63,7 +65,17 @@ This creates six tables:
 | `keysmith_usage` | Per-request usage records |
 | `keysmith_rotations` | Rotation history records |
 
-Every statement is idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS` and so on), so it's safe to run on every startup. The same steps are also registered as a Grove migration group, `postgres.Migrations`, if you'd rather run them through Grove's migrator.
+Each migration is a Go file in `store/postgres` named for its version, such as `20240101000001_create_keys.go`, and registers itself with grove's `Group.Add`. The statements are raw SQL run through `db.Exec`, since grove's SQL drivers don't have schema builders yet.
+
+### Upgrading from v1.8 or earlier
+
+Up to v1.8.x, `Migrate` ran every statement on every start, with no lock and no record. The first `Migrate` after you upgrade finds no keysmith rows in `grove_migrations`, so it runs the whole group once. Every step is safe on a schema that's already there (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`), so it records the versions and leaves your tables and rows alone. If you already ran `postgres.Migrations` through your own grove orchestrator, every version is recorded and nothing runs again.
+
+Upgrade every node before you count on the lock. A node still on the old version runs the old statements unlocked and can still collide with the rest.
+
+### Running migrations centrally
+
+If your app runs all its migrations in one place, register `postgres.Migrations` with that orchestrator next to your own groups, and turn the extension's run off with `WithDisableMigrate()` (or `disable_migrate: true`). Leaving both on works too. Both take the same lock, and whichever runs second finds nothing to apply.
 
 ## Health checks
 

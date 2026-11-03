@@ -1,3 +1,15 @@
+package postgres
+
+import (
+	"context"
+
+	"github.com/xraph/grove/migrate"
+)
+
+func init() {
+	Migrations.Add(
+		func(ctx context.Context, db *migrate.DB) error {
+			_, err := db.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS keysmith_rotations (
     id           TEXT PRIMARY KEY,
     key_id       TEXT NOT NULL REFERENCES keysmith_keys(id) ON DELETE CASCADE,
@@ -13,3 +25,12 @@ CREATE TABLE IF NOT EXISTS keysmith_rotations (
 
 CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_key ON keysmith_rotations (key_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_grace ON keysmith_rotations (grace_ends) WHERE grace_ends IS NOT NULL;
+`)
+			return err
+		},
+		func(ctx context.Context, db *migrate.DB) error {
+			_, err := db.Exec(ctx, `DROP TABLE IF EXISTS keysmith_rotations`)
+			return err
+		},
+	)
+}

@@ -51,13 +51,15 @@ keysmith.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate
 
 ## Migrations
 
-The store uses the grove migration orchestrator with programmatic migrations. Run them on startup:
+Run `Migrate` on startup:
 
 ```go
 if err := s.Migrate(ctx); err != nil {
     log.Fatal(err)
 }
 ```
+
+`Migrate` runs the grove migration group `sqlite.Migrations` through grove's orchestrator. It holds grove's migration lock, a row in `grove_migration_locks`, while it runs, and skips every migration `grove_migrations` already records, so you can call it on every start.
 
 This creates six tables:
 
@@ -70,14 +72,18 @@ This creates six tables:
 | `keysmith_usage` | Per-request usage records |
 | `keysmith_rotations` | Rotation history records |
 
-Migrations are idempotent and safe to run on every startup.
+Each migration is its own Go file in `store/sqlite`, named for its version, and its statements are raw SQL. SQLite has no `ADD COLUMN IF NOT EXISTS`, so the migrations that add a column count on their record to run only once. Don't delete keysmith rows from `grove_migrations` by hand.
+
+If a process dies while it holds the lock, the row stays set, and the next `Migrate` waits out grove's lock timeout (five minutes) and fails. Clear it with `UPDATE grove_migration_locks SET locked_at = NULL, locked_by = NULL`.
+
+To run migrations centrally, register `sqlite.Migrations` with your own orchestrator and turn the extension's run off with `WithDisableMigrate()`.
 
 ## Internals
 
 | Aspect | Detail |
 |--------|--------|
 | Driver | grove ORM + sqlitedriver |
-| Migrations | grove orchestrator with programmatic migrations |
+| Migrations | grove orchestrator, one Go file per migration |
 | Transactions | `AssignToKey`, `RemoveFromKey` and `RecordBatch` each run in one SQLite transaction, begun `IMMEDIATE` with the DSN above. Nothing else does. |
 | Concurrency | Multiple readers, single writer (WAL mode). Writers queue on the busy timeout. |
 | Subsystems | keys, policies, scopes, usages, rotations |

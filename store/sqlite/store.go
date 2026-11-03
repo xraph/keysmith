@@ -58,7 +58,9 @@ func (s *Store) Rotations() rotation.Store { return &rotationStore{sdb: s.sdb} }
 // Scopes returns the scope store.
 func (s *Store) Scopes() scope.Store { return &scopeStore{sdb: s.sdb} }
 
-// Migrate creates the required tables and indexes using the grove orchestrator.
+// Migrate applies the pending migrations in [Migrations] through grove's
+// orchestrator, which holds grove's migration lock (a row in
+// grove_migration_locks) while it runs.
 func (s *Store) Migrate(ctx context.Context) error {
 	executor, err := migrate.NewExecutorFor(s.sdb)
 	if err != nil {

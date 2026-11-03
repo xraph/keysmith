@@ -1,3 +1,15 @@
+package postgres
+
+import (
+	"context"
+
+	"github.com/xraph/grove/migrate"
+)
+
+func init() {
+	Migrations.Add(
+		func(ctx context.Context, db *migrate.DB) error {
+			_, err := db.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS keysmith_scopes (
     id          TEXT PRIMARY KEY,
     tenant_id   TEXT NOT NULL,
@@ -19,3 +31,15 @@ CREATE TABLE IF NOT EXISTS keysmith_key_scopes (
     scope_id  TEXT NOT NULL REFERENCES keysmith_scopes(id) ON DELETE CASCADE,
     PRIMARY KEY (key_id, scope_id)
 );
+`)
+			return err
+		},
+		func(ctx context.Context, db *migrate.DB) error {
+			_, err := db.Exec(ctx, `
+DROP TABLE IF EXISTS keysmith_key_scopes;
+DROP TABLE IF EXISTS keysmith_scopes;
+`)
+			return err
+		},
+	)
+}

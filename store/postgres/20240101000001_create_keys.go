@@ -1,3 +1,15 @@
+package postgres
+
+import (
+	"context"
+
+	"github.com/xraph/grove/migrate"
+)
+
+func init() {
+	Migrations.Add(
+		func(ctx context.Context, db *migrate.DB) error {
+			_, err := db.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS keysmith_keys (
     id              TEXT PRIMARY KEY,
     tenant_id       TEXT NOT NULL,
@@ -26,3 +38,12 @@ CREATE INDEX IF NOT EXISTS idx_keysmith_keys_state ON keysmith_keys (tenant_id, 
 CREATE INDEX IF NOT EXISTS idx_keysmith_keys_env ON keysmith_keys (tenant_id, environment);
 CREATE INDEX IF NOT EXISTS idx_keysmith_keys_expires ON keysmith_keys (expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_keysmith_keys_policy ON keysmith_keys (policy_id) WHERE policy_id IS NOT NULL;
+`)
+			return err
+		},
+		func(ctx context.Context, db *migrate.DB) error {
+			_, err := db.Exec(ctx, `DROP TABLE IF EXISTS keysmith_keys`)
+			return err
+		},
+	)
+}

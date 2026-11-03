@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/xraph/grove/drivers/pgdriver"
+	"github.com/xraph/grove/drivers/pgdriver/pgmigrate"
+	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/keysmith/key"
 	"github.com/xraph/keysmith/policy"
@@ -51,12 +53,14 @@ func (s *Store) Rotations() rotation.Store { return &rotationStore{db: s.db} }
 // Scopes returns the scope store.
 func (s *Store) Scopes() scope.Store { return &scopeStore{db: s.db} }
 
-// Migrate runs all embedded SQL migration statements in order.
+// Migrate applies the pending migrations in [Migrations] through grove's
+// orchestrator. It holds grove's migration lock (a Postgres advisory lock)
+// while it runs, so nodes that start together against one database take
+// turns, and every one after the first finds nothing left to apply.
 func (s *Store) Migrate(ctx context.Context) error {
-	for i, sql := range migrationSQL {
-		if _, err := s.db.Exec(ctx, sql); err != nil {
-			return fmt.Errorf("keysmith/postgres: exec migration %d: %w", i+1, err)
-		}
+	orch := migrate.NewOrchestrator(pgmigrate.New(s.db), Migrations)
+	if _, err := orch.Migrate(ctx); err != nil {
+		return fmt.Errorf("keysmith/postgres: migrate: %w", err)
 	}
 	return nil
 }
