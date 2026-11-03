@@ -51,6 +51,8 @@ List Grove first, because Keysmith looks up the database during `Register`. With
 1. Runs `Migrate` on the store, whichever backend it is, unless `disable_migrate` is set. On Postgres and SQLite that takes grove's migration lock, so replicas that start together take turns. If you run keysmith's migration group from a central migrator, set `disable_migrate`.
 2. Starts the engine. It has no background work: expired keys aren't swept on a timer, so call `eng.CleanupExpiredKeys(ctx)` from your own scheduler if you want them marked expired. (`ValidateKey` refuses an expired key either way.) Each run that finds keys to expire is traced as its own root span, `expire keys`.
 
+On Postgres, `Migrate` needs a direct or session-mode connection, because grove's lock is a session-level advisory lock. Behind transaction pooling (PgBouncer with `pool_mode = transaction`, or Neon's and Supabase's pooled endpoints) the lock and the unlock can land on different server sessions, and a leaked lock makes every other node's `Migrate` wait five minutes and fail. If the database the extension resolves goes through a pooler like that, set `disable_migrate` and run `postgres.Migrations` over a direct DSN. The [PostgreSQL store](/docs/stores/postgres#migrations) page has the rest.
+
 ### On stop
 
 Fires the `Shutdown` plugin hook. The extension doesn't close the store.

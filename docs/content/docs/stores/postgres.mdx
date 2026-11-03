@@ -54,7 +54,9 @@ if err := pgStore.Migrate(ctx); err != nil {
 
 `Migrate` runs the grove migration group `postgres.Migrations` through grove's orchestrator. It takes grove's migration lock first (a Postgres advisory lock), applies whatever `grove_migrations` doesn't record yet, and writes each record in the same transaction as the migration's statements. When several nodes start together against one database they take turns: the first applies the schema, and the rest find nothing left to do. You can call it on every start.
 
-This creates six tables:
+`Migrate` needs a direct connection, or one through a pooler in session mode. Grove's lock is a session-level advisory lock, and behind transaction pooling (PgBouncer with `pool_mode = transaction`, or the pooled endpoints Neon and Supabase give you) the lock and the unlock can land on different server sessions. The lock then leaks, and every other node's `Migrate` waits five minutes for it and fails. If your app only reaches Postgres through a transaction pooler, set `disable_migrate` and run `postgres.Migrations` over a direct DSN.
+
+This creates six tables, plus grove's own `grove_migrations` (which versions have run) and `grove_migration_locks` (who holds the lock) if they aren't there yet:
 
 | Table | Description |
 | ----- | ----------- |
@@ -65,17 +67,24 @@ This creates six tables:
 | `keysmith_usage` | Per-request usage records |
 | `keysmith_rotations` | Rotation history records |
 
-Each migration is a Go file in `store/postgres` named for its version, such as `20240101000001_create_keys.go`, and registers itself with grove's `Group.Add`. The statements are raw SQL run through `db.Exec`, since grove's SQL drivers don't have schema builders yet.
-
-### Upgrading from v1.8 or earlier
-
-Up to v1.8.x, `Migrate` ran every statement on every start, with no lock and no record. The first `Migrate` after you upgrade finds no keysmith rows in `grove_migrations`, so it runs the whole group once. Every step is safe on a schema that's already there (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`), so it records the versions and leaves your tables and rows alone. If you already ran `postgres.Migrations` through your own grove orchestrator, every version is recorded and nothing runs again.
-
-Upgrade every node before you count on the lock. A node still on the old version runs the old statements unlocked and can still collide with the rest.
+Each migration is a Go file in `store/postgres` named for its version, such as `20240101000001_create_keys.go`, and registers itself with grove's `Group.Add`. The statements are raw SQL run through `db.Exec`. Grove's Postgres schema builders could express them, but raw SQL keeps the statements keysmith has always shipped byte for byte, `IF NOT EXISTS` guards included, and those guards are what let the group run safely over a schema an older keysmith built.
 
 ### Running migrations centrally
 
 If your app runs all its migrations in one place, register `postgres.Migrations` with that orchestrator next to your own groups, and turn the extension's run off with `WithDisableMigrate()` (or `disable_migrate: true`). Leaving both on works too. Both take the same lock, and whichever runs second finds nothing to apply.
+
+## Upgrading to v1.9
+
+The first `Migrate` on v1.9 creates `grove_migrations` and `grove_migration_locks` if they aren't there and records nine rows under the group `keysmith`. After that it never reruns a recorded step.
+
+Up to v1.8.x, `Migrate` ran every statement on every start with no lock and no record, so a database those versions built has no keysmith rows yet, and the first run executes the whole group once. Every step is safe on a schema that's already there: `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `DROP TABLE IF EXISTS`, and an `UPDATE` whose `WHERE` only matches rotations with no old hint and a grace window still open. That `UPDATE` closes the windows of rotations recorded by v1.6 or older, as it used to on every start, and now it runs once. The rest of your tables and rows stay as they are. If you already ran `postgres.Migrations` through your own grove orchestrator, every version is recorded and nothing runs again.
+
+Before you roll it out:
+
+- The lock is advisory key 1, and `Migrate` waits up to five minutes for it. Every grove migrator on that database shares it, authsome's included, so if two start at once, one waits for the other.
+- Roll every node to v1.9 before you count on the lock. A node still on v1.8.x runs the old statements unlocked and can still collide with the rest.
+- A test that drops something and calls `Migrate` to put it back has to delete that version from `grove_migrations` first, because `Migrate` no longer reruns a recorded step.
+- Re-pinning keysmith v1.9.0 also pulls in forge v1.13.2, grove v1.10.1 and go-utils v1.5.0. In forge, nested router groups now inherit `WithGroupMiddleware` from the group above them, and logs go out over OTLP when an endpoint is set. Grove's sqlitedriver turns foreign keys on for every pooled connection, not only the one a pragma ran on.
 
 ## Health checks
 

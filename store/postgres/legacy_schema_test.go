@@ -1,11 +1,5 @@
 package postgres
 
-// legacyMigrationSQL is what Store.Migrate ran in keysmith v1.8.x, copied
-// from store/postgres/migrations.go at f736c6d: every statement, in order, on
-// every start, with no lock and no record in grove_migrations. The upgrade
-// tests build a database with it and then run the grove group over it. Entry
-// i matches the i-th migration of the group, which also lets a test replay it
-// as the v1.8.x group for a host that ran postgres.Migrations itself.
 const legacyKeyVersionSQL = `ALTER TABLE keysmith_keys ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0`
 
 const legacyCloseGraceSQL = `UPDATE keysmith_rotations SET grace_ends = created_at WHERE old_hint = '' AND grace_ends > created_at`
@@ -16,6 +10,12 @@ const legacyRotationHintsSQL = `ALTER TABLE keysmith_rotations ADD COLUMN IF NOT
 ALTER TABLE keysmith_rotations ADD COLUMN IF NOT EXISTS new_hint TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_keysmith_rotations_old_hash ON keysmith_rotations (old_key_hash);`
 
+// legacyMigrationSQL is what Store.Migrate ran in keysmith v1.8.x, copied
+// from store/postgres/migrations.go at f736c6d: every statement, in order, on
+// every start, with no lock and no record in grove_migrations. The upgrade
+// tests build a database with it and then run the grove group over it. Entry
+// i matches the i-th migration of the group, which also lets a test replay it
+// as the v1.8.x group for a host that ran postgres.Migrations itself.
 var legacyMigrationSQL = []string{
 	// 001_keys.sql
 	`CREATE TABLE IF NOT EXISTS keysmith_keys (
